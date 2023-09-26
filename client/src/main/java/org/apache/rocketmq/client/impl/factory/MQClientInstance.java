@@ -605,6 +605,7 @@ public class MQClientInstance {
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {
+            // 可冲入锁
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     TopicRouteData topicRouteData;
@@ -619,12 +620,17 @@ public class MQClientInstance {
                             }
                         }
                     } else {
+                        // 从nameserver 获取topic 的路由信息
                         topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 1000 * 3);
                     }
                     if (topicRouteData != null) {
                         TopicRouteData old = this.topicRouteTable.get(topic);
+                        // 判断两个topic 路由信息是否发生改变 不相等返回true，相等返回false
                         boolean changed = topicRouteDataIsChange(old, topicRouteData);
                         if (!changed) {
+                            // 根据Topic的名字，判断生产者对应的messageQueue是否更新（通过是否为空，为空返回true），
+                            // 消费者对应的MessageQueue时候更新（rebalance的表中是否包含，不包含返回true）；
+                            //
                             changed = this.isNeedUpdateTopicRouteInfo(topic);
                         } else {
                             log.info("the topic[{}] route info changed, old[{}] ,new[{}]", topic, old, topicRouteData);
@@ -632,13 +638,14 @@ public class MQClientInstance {
 
                         if (changed) {
                             TopicRouteData cloneTopicRouteData = topicRouteData.cloneTopicRouteData();
-
+                            // 放入Broker的名字和机器的地址信息
                             for (BrokerData bd : topicRouteData.getBrokerDatas()) {
                                 this.brokerAddrTable.put(bd.getBrokerName(), bd.getBrokerAddrs());
                             }
 
                             // Update Pub info
                             {
+                                // 遍历更新每个生产者的每个topic的信息包括 messageQueue，topic的路由信息
                                 TopicPublishInfo publishInfo = topicRouteData2TopicPublishInfo(topic, topicRouteData);
                                 publishInfo.setHaveTopicRouterInfo(true);
                                 Iterator<Entry<String, MQProducerInner>> it = this.producerTable.entrySet().iterator();
@@ -653,6 +660,7 @@ public class MQClientInstance {
 
                             // Update sub info
                             {
+                                // 遍历更新每个消费者的每个topic的订阅者订阅的 messageQueue，主要是rebalance
                                 Set<MessageQueue> subscribeInfo = topicRouteData2TopicSubscribeInfo(topic, topicRouteData);
                                 Iterator<Entry<String, MQConsumerInner>> it = this.consumerTable.entrySet().iterator();
                                 while (it.hasNext()) {

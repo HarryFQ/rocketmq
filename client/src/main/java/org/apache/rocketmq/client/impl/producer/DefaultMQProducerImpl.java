@@ -1100,10 +1100,14 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final SendCallback sendCallback, final long timeout
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         long beginStartTime = System.currentTimeMillis();
+        // 检查生产者状态
         this.makeSureStateOK();
+        // 检查topic 、消息体 的长度、格式
         Validators.checkMessage(msg, this.defaultMQProducer);
 
+        // 根据topic 获取 topic 的详细信息(是否是顺序消息、是否有路由信息信息、queue列表、下标)
         TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic());
+        // messageQueue 是否为空
         if (topicPublishInfo != null && topicPublishInfo.ok()) {
             MessageQueue mq = null;
             try {
@@ -1112,7 +1116,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 Message userMessage = MessageAccessor.cloneMessage(msg);
                 String userTopic = NamespaceUtil.withoutNamespace(userMessage.getTopic(), mQClientFactory.getClientConfig().getNamespace());
                 userMessage.setTopic(userTopic);
-
+                // 选择一个MessageQueue ，有三种方式一种是不超过MessageQueue 数量的随机数，一种是 shardingKey% MessageQueue数量, 一种是与机器绑定返回null.
                 mq = mQClientFactory.getClientConfig().queueWithNamespace(selector.select(messageQueueList, userMessage, arg));
             } catch (Throwable e) {
                 throw new MQClientException("select message queue threw exception.", e);
