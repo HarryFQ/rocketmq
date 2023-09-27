@@ -88,6 +88,7 @@ public class PullAPIWrapper {
                 }
             }
 
+            /// 过滤消息
             if (this.hasHook()) {
                 FilterMessageContext filterMessageContext = new FilterMessageContext();
                 filterMessageContext.setUnitMode(unitMode);
