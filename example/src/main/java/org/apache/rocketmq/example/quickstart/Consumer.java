@@ -27,6 +27,7 @@ import org.apache.rocketmq.common.message.MessageExt;
 
 /**
  * This example shows how to subscribe and consume messages using providing {@link DefaultMQPushConsumer}.
+ *
  */
 public class Consumer {
 
@@ -34,39 +35,29 @@ public class Consumer {
 
         /*
          * Instantiate with specified consumer group name.
+         * 创建消费者，指定group
          */
-        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("please_rename_unique_group_name_4");
-
-        /*
-         * Specify name server addresses.
-         * <p/>
-         *
-         * Alternatively, you may specify name server addresses via exporting environmental variable: NAMESRV_ADDR
-         * <pre>
-         * {@code
-         * consumer.setNamesrvAddr("name-server1-ip:9876;name-server2-ip:9876");
-         * }
-         * </pre>
-         */
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("my-group");
 
         /*
          * Specify where to start in case the specified consumer group is a brand new one.
          */
+        // 指定nameserver 地址  192.168.0.107:9876
+        consumer.setNamesrvAddr("127.0.0.1:9876");
         consumer.setConsumeFromWhere(ConsumeFromWhere.CONSUME_FROM_FIRST_OFFSET);
-
         /*
          * Subscribe one more more topics to consume.
          */
+        // 指定topic 和tag
         consumer.subscribe("TopicTest", "*");
 
-        /*
-         *  Register callback to execute on arrival of messages fetched from brokers.
-         */
+        // 设置回调函数，处理新的消息
         consumer.registerMessageListener(new MessageListenerConcurrently() {
-
+            // 接受新消息
             @Override
             public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs,
                 ConsumeConcurrentlyContext context) {
+
                 System.out.printf("%s Receive New Messages: %s %n", Thread.currentThread().getName(), msgs);
                 return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
             }

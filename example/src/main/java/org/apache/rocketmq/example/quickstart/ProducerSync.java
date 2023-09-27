@@ -11,7 +11,7 @@ import org.apache.rocketmq.remoting.common.RemotingHelper;
 /**
  * @author: Mr.Harry
  * @date : 2021/4/27 23:15
- * @title : 异步发送消息
+ * @title : 异步发送消息 哦
  */
 public class ProducerSync {
 
