@@ -86,6 +86,9 @@ public class RequestCode {
 
     public static final int DELETE_KV_CONFIG = 102;
 
+    /**
+     * 注册事件
+     */
     public static final int REGISTER_BROKER = 103;
 
     public static final int UNREGISTER_BROKER = 104;
@@ -176,6 +179,9 @@ public class RequestCode {
 
     public static final int QUERY_CONSUME_QUEUE = 321;
 
+    /**
+     * 心跳
+     */
     public static final int QUERY_DATA_VERSION = 322;
 
     /**

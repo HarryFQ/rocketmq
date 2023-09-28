@@ -917,6 +917,7 @@ public class BrokerController {
         TopicConfig registerTopicConfig = topicConfig;
         if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())
             || !PermName.isReadable(this.getBrokerConfig().getBrokerPermission())) {
+            // 创建新的topic
             registerTopicConfig =
                 new TopicConfig(topicConfig.getTopicName(), topicConfig.getReadQueueNums(), topicConfig.getWriteQueueNums(),
                     this.brokerConfig.getBrokerPermission());
@@ -956,6 +957,7 @@ public class BrokerController {
         }
     }
 
+    // 进行注册
     private void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
         // 注册消息
