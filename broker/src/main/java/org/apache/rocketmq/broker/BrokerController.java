@@ -889,7 +889,7 @@ public class BrokerController {
             handleSlaveSynchronize(messageStoreConfig.getBrokerRole());
             this.registerBrokerAll(true, false, true);
         }
-        // 创建定时线程池，定时向nameserver 注册信息
+        // todo 创建定时线程池，定时向nameserver 注册信息
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
