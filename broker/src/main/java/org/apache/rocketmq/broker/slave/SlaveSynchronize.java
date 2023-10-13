@@ -46,9 +46,13 @@ public class SlaveSynchronize {
     }
 
     public void syncAll() {
+        //同步Topic配置信息 --TopicConfigManager
         this.syncTopicConfig();
+        //同步消费进度信息 -- ConsumerOffsetManager
         this.syncConsumerOffset();
+        //同步定时消息相关信息 -- ScheduleMessageService
         this.syncDelayOffset();
+        //同步订阅组配置信息 --SubscriptionGroupManager
         this.syncSubscriptionGroupConfig();
     }
 
