@@ -51,6 +51,7 @@ public interface OffsetStore {
 
     /**
      * Persist the offset,may be in local storage or remote name server
+     * 持久化偏移量，可能在本地存储或远程名称服务器中
      */
     void persist(final MessageQueue mq);
 
