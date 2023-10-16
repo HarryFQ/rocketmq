@@ -34,12 +34,15 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
         FaultItem old = this.faultItemTable.get(name);
         if (null == old) {
             final FaultItem faultItem = new FaultItem(name);
+            // 当前时延
             faultItem.setCurrentLatency(currentLatency);
+            // 当前时间+隔离间隔时间
             faultItem.setStartTimestamp(System.currentTimeMillis() + notAvailableDuration);
 
             old = this.faultItemTable.putIfAbsent(name, faultItem);
             if (old != null) {
                 old.setCurrentLatency(currentLatency);
+                // 当前时间+隔离间隔时间
                 old.setStartTimestamp(System.currentTimeMillis() + notAvailableDuration);
             }
         } else {
@@ -131,6 +134,7 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
         }
 
         public boolean isAvailable() {
+            // 判断当前时间是否超过退避时间
             return (System.currentTimeMillis() - startTimestamp) >= 0;
         }
 

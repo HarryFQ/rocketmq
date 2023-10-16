@@ -17,12 +17,25 @@
 
 package org.apache.rocketmq.client.latency;
 
+/**
+ * 生产者负载均衡核心入口类
+ * @param <T>
+ */
 public interface LatencyFaultTolerance<T> {
     void updateFaultItem(final T name, final long currentLatency, final long notAvailableDuration);
 
+    /**
+     * 判断达到退避时间，其实就是根据之前延时时间绝定的不可用时间是否达到了。
+     * @param name
+     * @return
+     */
     boolean isAvailable(final T name);
 
     void remove(final T name);
 
+    /**
+     * 选择最新的一个队列
+     * @return
+     */
     T pickOneAtLeast();
 }

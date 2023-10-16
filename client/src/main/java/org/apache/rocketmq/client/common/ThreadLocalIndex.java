@@ -26,7 +26,9 @@ public class ThreadLocalIndex {
     public int getAndIncrement() {
         Integer index = this.threadLocalIndex.get();
         if (null == index) {
+            // 随机数绝对值
             index = Math.abs(random.nextInt());
+            // 放入到当前的线程之中，也就是说每个线程都是不一样的。
             this.threadLocalIndex.set(index);
         }
 
