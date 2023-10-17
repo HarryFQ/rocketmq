@@ -85,14 +85,18 @@ RocketMQ的RPC通信采用Netty组件作为底层通信库，同样也遵循了R
 
 ![](image/rocketmq_design_6.png)
 
-上面的框图中可以大致了解RocketMQ中NettyRemotingServer的Reactor 多线程模型。一个 Reactor 主线程（eventLoopGroupBoss，即为上面的1）负责监听 TCP网络连接请求，建立好连接，创建SocketChannel，并注册到selector上。RocketMQ的源码中会自动根据OS的类型选择NIO和Epoll，也可以通过参数配置）,然后监听真正的网络数据。拿到网络数据后，再丢给Worker线程池（eventLoopGroupSelector，即为上面的“N”，源码中默认设置为3），在真正执行业务逻辑之前需要进行SSL验证、编解码、空闲检查、网络连接管理，这些工作交给defaultEventExecutorGroup（即为上面的“M1”，源码中默认设置为8）去做。而处理业务操作放在业务线程池中执行，根据 RomotingCommand 的业务请求码code去processorTable这个本地缓存变量中找到对应的 processor，然后封装成task任务后，提交给对应的业务processor处理线程池来执行（sendMessageExecutor，以发送消息为例，即为上面的 “M2”）。从入口到业务逻辑的几个步骤中线程池一直再增加，这跟每一步逻辑复杂性相关，越复杂，需要的并发通道越宽。
+上面的框图中可以大致了解RocketMQ中NettyRemotingServer的Reactor 多线程模型。
+一个 Reactor 主线程（eventLoopGroupBoss，即为上面的1）负责监听 TCP网络连接请求，建立好连接，创建SocketChannel，并注册到selector上。RocketMQ的源码中会自动根据OS的类型选择NIO和Epoll，也可以通过参数配置）,然后监听真正的网络数据。
+拿到网络数据后，再丢给Worker线程池（eventLoopGroupSelector，即为上面的“N”，源码中默认设置为3），在真正执行业务逻辑之前需要进行SSL验证、编解码、空闲检查、网络连接管理，这些工作交给defaultEventExecutorGroup（即为上面的“M1”，源码中默认设置为8）去做。
+而处理业务操作放在业务线程池中执行，根据 RomotingCommand 的业务请求码code去processorTable这个本地缓存变量中找到对应的 processor，然后封装成task任务后，提交给对应的业务processor处理线程池来执行（sendMessageExecutor，以发送消息为例，即为上面的 “M2”）。从入口到业务逻辑的几个步骤中线程池一直再增加，这跟每一步逻辑复杂性相关，越复杂，需要的并发通道越宽。
 
-线程数 | 线程名 | 线程具体说明
- --- | --- | --- 
-1 | NettyBoss_%d | Reactor 主线程
-N | NettyServerEPOLLSelector_%d_%d | Reactor 线程池
-M1 | NettyServerCodecThread_%d | Worker线程池
-M2 | RemotingExecutorThread_%d | 业务processor处理线程池
+
+线程数 | 线程名 | 线程具体说明                 |指责
+ --- | --- |------------------------| --- 
+1 | NettyBoss_%d | Reactor 主线程(默认线程数量：1)  | 负责监听 TCP网络连接请求，建立好连接，创建SocketChannel，并注册到selector上
+N | NettyServerEPOLLSelector_%d_%d | Reactor 线程池 (默认线程数量：3) | RocketMQ的源码中会自动根据OS的类型选择NIO和Epoll，也可以通过参数配置）,然后监听真正的网络数据。 拿到网络数据后，再丢给Worker线程池
+M1 | NettyServerCodecThread_%d | Worker线程池 (默认线程数量：8)   | SSL验证、编解码、空闲检查、网络连接管理
+M2 | RemotingExecutorThread_%d | 业务processor处理线程池 (默认线程数量：8)      |  处理业务操作放在业务线程池中执行，根据 RomotingCommand 的业务请求码code去processorTable这个本地缓存变量中找到对应的 processor，然后封装成task任务后，提交给对应的业务processor处理线程池来执行
 
 ### 3 消息过滤
 RocketMQ分布式消息队列的消息过滤方式有别于其它MQ中间件，是在Consumer端订阅消息时再做消息过滤的。RocketMQ这么做是在于其Producer端写入消息和Consumer端订阅消息采用分离存储的机制来实现的，Consumer端订阅消息是需要通过ConsumeQueue这个消息消费的逻辑队列拿到一个索引，然后再从CommitLog里面读取真正的消息实体内容，所以说到底也是还绕不开其存储结构。其ConsumeQueue的存储结构如下，可以看到其中有8个字节存储的Message Tag的哈希值，基于Tag的消息过滤正式基于这个字段值的。
