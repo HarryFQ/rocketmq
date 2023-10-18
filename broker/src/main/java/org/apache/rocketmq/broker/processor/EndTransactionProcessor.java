@@ -50,6 +50,14 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         this.brokerController = brokerController;
     }
 
+    /**
+     * {@link org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#endTransaction} 处理这个请求
+     *
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws
         RemotingCommandException {
@@ -123,7 +131,9 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
             }
         }
         OperationResult result = new OperationResult();
+        // 如果是事物提交了
         if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {
+            // 根据消息的偏移量从commitLog中获取消息
             result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
@@ -131,18 +141,23 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                     MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());
                     msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));
                     msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());
+                    // 真正投递的topic的offset 与 half的offset 相等
                     msgInner.setPreparedTransactionOffset(requestHeader.getCommitLogOffset());
                     msgInner.setStoreTimestamp(result.getPrepareMessage().getStoreTimestamp());
                     MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_TRANSACTION_PREPARED);
+                    // 同步存储消息
                     RemotingCommand sendResult = sendFinalMessage(msgInner);
+                    // 如果存储(store)层返回success
                     if (sendResult.getCode() == ResponseCode.SUCCESS) {
+                        // 不会直接删除消息
                         this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                     }
                     return sendResult;
                 }
                 return res;
             }
-        } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {
+        } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) { // 回滚的话
+            // 根据消息的偏移量从commitLog中获取消息
             result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
@@ -172,6 +187,7 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                 return response;
             }
 
+            // 这个是查询来的消息的offset与传进来的offset 不想等
             if (msgExt.getQueueOffset() != requestHeader.getTranStateTableOffset()) {
                 response.setCode(ResponseCode.SYSTEM_ERROR);
                 response.setRemark("The transaction state table offset wrong");
@@ -192,6 +208,11 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         return response;
     }
 
+    /**
+     * 根据half中的存储的真实的topic，queueId信息，放入到对应topic中，并根据tag构建 filter
+     * @param msgExt
+     * @return
+     */
     private MessageExtBrokerInner endMessageTransaction(MessageExt msgExt) {
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(msgExt.getUserProperty(MessageConst.PROPERTY_REAL_TOPIC));
@@ -205,6 +226,7 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         msgInner.setWaitStoreMsgOK(false);
         msgInner.setTransactionId(msgExt.getUserProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX));
         msgInner.setSysFlag(msgExt.getSysFlag());
+        // 根据tag构建filter
         TopicFilterType topicFilterType =
             (msgInner.getSysFlag() & MessageSysFlag.MULTI_TAGS_FLAG) == MessageSysFlag.MULTI_TAGS_FLAG ? TopicFilterType.MULTI_TAG
                 : TopicFilterType.SINGLE_TAG;
@@ -219,6 +241,7 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
 
     private RemotingCommand sendFinalMessage(MessageExtBrokerInner msgInner) {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
+        // 同步存储消息
         final PutMessageResult putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);
         if (putMessageResult != null) {
             switch (putMessageResult.getPutMessageStatus()) {

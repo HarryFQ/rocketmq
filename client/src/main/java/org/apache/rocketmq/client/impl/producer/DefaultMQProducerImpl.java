@@ -1219,9 +1219,12 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         Validators.checkMessage(msg, this.defaultMQProducer);
 
         SendResult sendResult = null;
+        // 设置prepared属性
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_TRANSACTION_PREPARED, "true");
+        //设置生产者组
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_PRODUCER_GROUP, this.defaultMQProducer.getProducerGroup());
         try {
+            // 发送消息 Broker对消息发送请求的处理在 SendMessageProcessor 中
             sendResult = this.send(msg);
         } catch (Exception e) {
             throw new MQClientException("send message Exception", e);
@@ -1239,12 +1242,15 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     if (null != transactionId && !"".equals(transactionId)) {
                         msg.setTransactionId(transactionId);
                     }
+                    // 如果本地事务执行器不为空 就执行本地事物
                     if (null != localTransactionExecuter) {
                         localTransactionState = localTransactionExecuter.executeLocalTransactionBranch(msg, arg);
                     } else if (transactionListener != null) {
+                        // 如果事务监听器不为空
                         log.debug("Used new transaction API");
                         localTransactionState = transactionListener.executeLocalTransaction(msg, arg);
                     }
+                    // 如果本地事务状态为空，设置为UNKNOW
                     if (null == localTransactionState) {
                         localTransactionState = LocalTransactionState.UNKNOW;
                     }
@@ -1263,6 +1269,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             case FLUSH_DISK_TIMEOUT:
             case FLUSH_SLAVE_TIMEOUT:
             case SLAVE_NOT_AVAILABLE:
+                // Timeout slave 不可用则设置消息回滚
                 localTransactionState = LocalTransactionState.ROLLBACK_MESSAGE;
                 break;
             default:
@@ -1270,6 +1277,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         }
 
         try {
+            // 结束事务
             this.endTransaction(sendResult, localTransactionState, localException);
         } catch (Exception e) {
             log.warn("local transaction execute " + localTransactionState + ", but end broker transaction failed", e);
@@ -1310,12 +1318,15 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         requestHeader.setCommitLogOffset(id.getOffset());
         switch (localTransactionState) {
             case COMMIT_MESSAGE:
+                // 表示提交事务，结束事务的请求头中设置 TRANSACTION_COMMIT_TYPE标识进行事务提交
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_COMMIT_TYPE);
                 break;
             case ROLLBACK_MESSAGE:
+                //表示回滚事务，请求头中设置TRANSACTION_ROLLBACK_TYPE标识进行事务回滚
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_ROLLBACK_TYPE);
                 break;
             case UNKNOW:
+                // 事务执行结果未知状态，请求头中设置TRANSACTION_NOT_TYPE标识未知状态的事务
                 requestHeader.setCommitOrRollback(MessageSysFlag.TRANSACTION_NOT_TYPE);
                 break;
             default:
@@ -1326,6 +1337,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         requestHeader.setTranStateTableOffset(sendResult.getQueueOffset());
         requestHeader.setMsgId(sendResult.getMsgId());
         String remark = localException != null ? ("executeLocalTransactionBranch exception: " + localException.toString()) : null;
+        // 向broker发送事物结束请求
         this.mQClientFactory.getMQClientAPIImpl().endTransactionOneway(brokerAddr, requestHeader, remark,
             this.defaultMQProducer.getSendMsgTimeout());
     }

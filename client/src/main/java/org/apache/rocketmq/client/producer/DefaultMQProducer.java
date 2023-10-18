@@ -712,7 +712,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * This method is to send transactional messages.
-     *
+     * 发送事物消息
      * @param msg Transactional message to send.
      * @param tranExecuter local transaction executor.
      * @param arg Argument used along with local transaction executor.

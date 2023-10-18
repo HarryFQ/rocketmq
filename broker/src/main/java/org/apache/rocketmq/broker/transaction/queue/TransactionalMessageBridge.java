@@ -200,12 +200,21 @@ public class TransactionalMessageBridge {
         return store.asyncPutMessage(parseHalfMessageInner(messageInner));
     }
 
+    /**
+     * 将消息放入到内部队列中，队列名：RMQ_SYS_TRANS_HALF_TOPIC queue:0、
+     * 设置消息实际的主题和队列ID，待收到事务提交请求后恢复实际的主题和队列ID，向实际的队列中添加消息
+     * 更改消息的主题为half消息主题RMQ_SYS_TRANS_HALF_TOPIC，先将消息投送到half消息队列中
+     * half主题对应的消息队列ID为0，所以更改消息的队列ID为0
+     * @param msgInner
+     * @return
+     */
     private MessageExtBrokerInner parseHalfMessageInner(MessageExtBrokerInner msgInner) {
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_REAL_TOPIC, msgInner.getTopic());
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_REAL_QUEUE_ID,
             String.valueOf(msgInner.getQueueId()));
         msgInner.setSysFlag(
             MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), MessageSysFlag.TRANSACTION_NOT_TYPE));
+        // 事物消息的内部topic
         msgInner.setTopic(TransactionalMessageUtil.buildHalfTopic());
         msgInner.setQueueId(0);
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));
@@ -215,6 +224,9 @@ public class TransactionalMessageBridge {
     public boolean putOpMessage(MessageExt messageExt, String opType) {
         MessageQueue messageQueue = new MessageQueue(messageExt.getTopic(),
             this.brokerController.getBrokerConfig().getBrokerName(), messageExt.getQueueId());
+        // 如果是删除则 将topic，queueId 添加到RMQ_SYS_TRANS_OP_HALF_TOPIC 对列中
+        // 由于CommitLog追加写的性质，RocketMQ并不会直接将half消息从CommitLog中删除，
+        // 而是使用了另外一个OP主题RMQ_SYS_TRANS_OP_HALF_TOPIC（以下简称OP主题/队列），将已经提交/回滚的消息记录在OP主题队列中
         if (TransactionalMessageUtil.REMOVETAG.equals(opType)) {
             return addRemoveTagInTransactionOp(messageExt, messageQueue);
         }

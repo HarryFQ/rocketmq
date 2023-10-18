@@ -26,7 +26,7 @@ public interface TransactionalMessageService {
 
     /**
      * Process prepare message, in common, we should put this message to storage service.
-     *
+     *同步步处理half 消息
      * @param messageInner Prepare(Half) message.
      * @return Prepare message storage result.
      */
@@ -34,7 +34,7 @@ public interface TransactionalMessageService {
 
     /**
      * Process prepare message in async manner, we should put this message to storage service
-     *
+     * 异步处理half 消息
      * @param messageInner Prepare(Half) message.
      * @return CompletableFuture of put result, will be completed at put success(flush and replica done)
      */
@@ -42,13 +42,14 @@ public interface TransactionalMessageService {
 
     /**
      * Delete prepare message when this message has been committed or rolled back.
-     *
+     * 在消息 提交或者回滚时删除half消息
      * @param messageExt
      */
     boolean deletePrepareMessage(MessageExt messageExt);
 
     /**
      * Invoked to process commit prepare message.
+     * 处理事物提交了消息
      *
      * @param requestHeader Commit message request header.
      * @return Operate result contains prepare message and relative error code.
@@ -57,7 +58,7 @@ public interface TransactionalMessageService {
 
     /**
      * Invoked to roll back prepare message.
-     *
+     *如果业务回滚了，则执行
      * @param requestHeader Prepare message request header.
      * @return Operate result contains prepare message and relative error code.
      */
@@ -66,7 +67,7 @@ public interface TransactionalMessageService {
     /**
      * Traverse uncommitted/unroll back half message and send check back request to producer to obtain transaction
      * status.
-     *
+     *遍历未提交/回滚一半消息，并向生产者发送回检请求以获取事务状态。
      * @param transactionTimeout The minimum time of the transactional message to be checked firstly, one message only
      * exceed this time interval that can be checked.
      * @param transactionCheckMax The maximum number of times the message was checked, if exceed this value, this
