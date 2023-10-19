@@ -66,20 +66,39 @@ public class TopicPublishInfo {
         this.haveTopicRouterInfo = haveTopicRouterInfo;
     }
 
+    /**
+     * selectOneMessageQueue方法中，如果上一次选择的BrokerName为空，则调用无参的selectOneMessageQueue方法选择消息队列，也是默认的选择方式
+     * ，首先对计数器增一，然后用计数器的值对messageQueueList列表的长度取余得到下标值pos，再从messageQueueList中获取pos位置的元素，以此达到轮询从messageQueueList列表中选择消息队列的目的。
+     *
+     * 如果传入的BrokerName不为空，遍历messageQueueList列表，同样对计数器增一，并对messageQueueList列表的长度取余，选取一个消息队列
+     * ，不同的地方是选择消息队列之后，会判断消息队列所属的Broker是否与上一次选择的Broker名称一致，如果一致则继续循环，轮询选择下一个消息队列
+     * ，也就是说，如果上一次选择了某个Broker发送消息，本次将不会再选择这个Broker，当然如果最后仍未找到满足要求的消息队列，则仍旧使用默认的选择方式
+     * ，也就是调用无参的selectOneMessageQueue方法进行选择。
+     * @param lastBrokerName
+     * @return
+     */
     public MessageQueue selectOneMessageQueue(final String lastBrokerName) {
         if (lastBrokerName == null) {
+            // 如果上一次选择的BrokerName为空
+            // 调用无参的选择消息队列的方法
             return selectOneMessageQueue();
         } else {
+            // 遍历消息队列列表
             for (int i = 0; i < this.messageQueueList.size(); i++) {
+                // 计数器增1
                 int index = this.sendWhichQueue.getAndIncrement();
+                // 对长度取余
                 int pos = Math.abs(index) % this.messageQueueList.size();
                 if (pos < 0)
                     pos = 0;
+                // 获取消息队列，也就是使用使用轮询的方式选择消息队列
                 MessageQueue mq = this.messageQueueList.get(pos);
+                // 如果队列所属的Broker与上一次选择的不同，返回消息队列
                 if (!mq.getBrokerName().equals(lastBrokerName)) {
                     return mq;
                 }
             }
+            // 使用默认方式选择
             return selectOneMessageQueue();
         }
     }

@@ -304,11 +304,12 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Send message in synchronous mode. This method returns only when the sending procedure totally completes. </p>
-     *
+     * 1.以同步方式发送消息。此方法仅在发送过程完全完成时返回。
      * <strong>Warn:</strong> this method has internal retry-mechanism, that is, internal implementation will retry
      * {@link #retryTimesWhenSendFailed} times before claiming failure. As a result, multiple messages may potentially
      * delivered to broker(s). It's up to the application developers to resolve potential duplication issue.
-     *
+     *这个方法有内部的重试机制，即内部实现在声明失败之前会重试{@link #retryTimesWhenSendFailed}次。
+     * 因此，可能会有多个消息传递给代理。这取决于应用程序开发人员解决潜在的重复问题。
      * @param msg Message to send.
      * @return {@link SendResult} instance to inform senders details of the deliverable, say Message ID of the message,
      * {@link SendStatus} indicating broker storage/replication status, message queue sent to, etc.
@@ -346,13 +347,14 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Send message to broker asynchronously. </p>
-     *
+     *向代理异步发送消息
      * This method returns immediately. On sending completion, <code>sendCallback</code> will be executed. </p>
      *
      * Similar to {@link #send(Message)}, internal implementation would potentially retry up to {@link
      * #retryTimesWhenSendAsyncFailed} times before claiming sending failure, which may yield message duplication and
      * application developers are the one to resolve this potential issue.
-     *
+     *此方法立即返回。在发送完成时，将执行<code>sendCallback</code>。与{@link #send(Message)}类似，内部实现可能会在声明发送失败之
+     * 前重试多达{@link #retryTimesWhenSendAsyncFailed}次，这可能会产生消息重复，应用程序开发人员需要解决这个潜在的问题。
      * @param msg Message to send.
      * @param sendCallback Callback to execute on sending completed, either successful or unsuccessful.
      * @throws MQClientException if there is any client error.
@@ -386,7 +388,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     /**
      * Similar to <a href="https://en.wikipedia.org/wiki/User_Datagram_Protocol">UDP</a>, this method won't wait for
      * acknowledgement from broker before return. Obviously, it has maximums throughput yet potentials of message loss.
-     *
+     *异步发送消息，没有回调函数
      * @param msg Message to send.
      * @throws MQClientException if there is any client error.
      * @throws RemotingException if there is any network-tier error.
