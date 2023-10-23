@@ -28,12 +28,27 @@ import org.apache.rocketmq.store.config.MessageStoreConfig;
 import org.apache.rocketmq.store.util.LibC;
 import sun.nio.ch.DirectBuffer;
 
+/**
+ * 暂存池
+ */
 public class TransientStorePool {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    /**
+     * 暂存池大小
+     */
     private final int poolSize;
+    /**
+     * 申请的每一块内存大小
+     */
     private final int fileSize;
+    /**
+     * 双端队列，存放申请的内存
+     */
     private final Deque<ByteBuffer> availableBuffers;
+    /**
+     * 存储配置
+     */
     private final MessageStoreConfig storeConfig;
 
     public TransientStorePool(final MessageStoreConfig storeConfig) {
@@ -45,15 +60,18 @@ public class TransientStorePool {
 
     /**
      * It's a heavy init method.
+     * 初始化
      */
     public void init() {
+        //根据暂存池大小申请内存
         for (int i = 0; i < poolSize; i++) {
+            // 申请直接内存
             ByteBuffer byteBuffer = ByteBuffer.allocateDirect(fileSize);
 
             final long address = ((DirectBuffer) byteBuffer).address();
             Pointer pointer = new Pointer(address);
             LibC.INSTANCE.mlock(pointer, new NativeLong(fileSize));
-
+            // 放入到暂存池中
             availableBuffers.offer(byteBuffer);
         }
     }

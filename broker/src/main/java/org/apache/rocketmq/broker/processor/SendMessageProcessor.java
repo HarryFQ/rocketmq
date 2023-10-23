@@ -65,11 +65,20 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         super(brokerController);
     }
 
+    /**
+     * 在Broker收到生产者的发送消息请求时，会进入到SendMessageProcessor的processRequest方法中处理请求，然后又会调用asyncProcessRequest异步处理消息，然后从请求中解析请求头数据，并判断是否是批量发送消息的请求，
+     * 如果是批量发送消息调用asyncSendBatchMessage方法处理，否则调用asyncSendMessage方法处理单个消息
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx,
                                           RemotingCommand request) throws RemotingCommandException {
         RemotingCommand response = null;
         try {
+            // 处理请求
             response = asyncProcessRequest(ctx, request).get();
         } catch (InterruptedException | ExecutionException e) {
             log.error("process SendMessage error, request : " + request.toString(), e);
@@ -82,6 +91,14 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         asyncProcessRequest(ctx, request).thenAcceptAsync(responseCallback::callback, this.brokerController.getSendMessageExecutor());
     }
 
+    /**
+     * 异步处理发送消息的请求:
+     * 从请求中解析请求头数据，并判断是否是批量发送消息的请求，如果是批量发送消息调用asyncSendBatchMessage方法处理，否则调用asyncSendMessage方法处理单个消息
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public CompletableFuture<RemotingCommand> asyncProcessRequest(ChannelHandlerContext ctx,
                                                                   RemotingCommand request) throws RemotingCommandException {
         final SendMessageContext mqtraceContext;
@@ -89,6 +106,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             case RequestCode.CONSUMER_SEND_MSG_BACK:
                 return this.asyncConsumerSendMsgBack(ctx, request);
             default:
+                // 解析请求头
                 SendMessageRequestHeader requestHeader = parseRequestHeader(request);
                 if (requestHeader == null) {
                     return CompletableFuture.completedFuture(null);
@@ -96,8 +114,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 mqtraceContext = buildMsgContext(ctx, requestHeader);
                 this.executeSendMessageHookBefore(ctx, request, mqtraceContext);
                 if (requestHeader.isBatch()) {
+                    // 批量消息发送处理
                     return this.asyncSendBatchMessage(ctx, request, mqtraceContext, requestHeader);
                 } else {
+                    // 单个消息发送处理
                     return this.asyncSendMessage(ctx, request, mqtraceContext, requestHeader);
                 }
         }
@@ -246,43 +266,66 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
     }
 
 
+    /**
+     * 单个消息发送处理
+     * 存储消息流程：
+     * 1. 创建MessageExtBrokerInner对象，对消息的相关内容进行封装，将主题信息、队列ID、消息内容、消息属性、发送消息时间、发送消息的主机地址等信息设置到MessageExtBrokerInner中
+     * 2. 判断是否使用了事务，如果未使用事务调用brokerController的getMessageStore方法获取MessageStore对象，然后调用asyncPutMessage方法对消息进行持久化存储
+     * 3. 返回消息的存储结果
+     * @param ctx
+     * @param request
+     * @param mqtraceContext
+     * @param requestHeader
+     * @return
+     */
     private CompletableFuture<RemotingCommand> asyncSendMessage(ChannelHandlerContext ctx, RemotingCommand request,
                                                                 SendMessageContext mqtraceContext,
                                                                 SendMessageRequestHeader requestHeader) {
         final RemotingCommand response = preSend(ctx, request, requestHeader);
+        // 请求头
         final SendMessageResponseHeader responseHeader = (SendMessageResponseHeader)response.readCustomHeader();
 
         if (response.getCode() != -1) {
             return CompletableFuture.completedFuture(response);
         }
 
+        // 消息体
         final byte[] body = request.getBody();
 
         int queueIdInt = requestHeader.getQueueId();
+        // topic 相关的配置
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
 
         if (queueIdInt < 0) {
             queueIdInt = randomQueueId(topicConfig.getWriteQueueNums());
         }
-
+        // 创建MessageExtBrokerInner对象，之后使用这个对象来操纵消息
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
+        // 设置主题
         msgInner.setTopic(requestHeader.getTopic());
+        // 设置消息所在的队列ID
         msgInner.setQueueId(queueIdInt);
 
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return CompletableFuture.completedFuture(response);
         }
-
+        // 设置消息内容
         msgInner.setBody(body);
         msgInner.setFlag(requestHeader.getFlag());
+        // 设置属性
         MessageAccessor.setProperties(msgInner, MessageDecoder.string2messageProperties(requestHeader.getProperties()));
         msgInner.setPropertiesString(requestHeader.getProperties());
+        // 设置发送消息时间
         msgInner.setBornTimestamp(requestHeader.getBornTimestamp());
+        // 设置发送消息的主机地址
         msgInner.setBornHost(ctx.channel().remoteAddress());
+        // 设置存储消息的主机地址
         msgInner.setStoreHost(this.getStoreHost());
         msgInner.setReconsumeTimes(requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes());
+        // 属性中添加集群名称
         String clusterName = this.brokerController.getBrokerConfig().getBrokerClusterName();
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_CLUSTER, clusterName);
+
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));
 
         CompletableFuture<PutMessageResult> putMessageResult = null;
@@ -297,10 +340,14 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                                 + "] sending transaction message is forbidden");
                 return CompletableFuture.completedFuture(response);
             }
+            // 事务处理
             putMessageResult = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
         } else {
+            // MessageStore是一个接口，在BrokerController的初始化方法中可以看到，具体使用的是DefaultMessageStore
+            // 消息持久化
             putMessageResult = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
         }
+        // 返回消息持久化结果
         return handlePutMessageResultFuture(putMessageResult, response, request, msgInner, responseHeader, mqtraceContext, ctx, queueIdInt);
     }
 

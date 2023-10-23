@@ -118,6 +118,15 @@ public class DefaultMessageStore implements MessageStore {
     private final ScheduledExecutorService diskCheckScheduledExecutorService =
             Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("DiskCheckScheduledThread"));
 
+    /**
+     * DefaultMessageStore中有一个CommitLog类型的成员变量，在DefaultMessageStore中的构造函数中可以看到，如果启用了Dleger
+     * ，使用的是DLedgerCommitLog，DLedgerCommitLog是CommitLog的子类，如果未启用Dleger，就使用CommitLog自己（接下来会以CommitLog为例）
+     * @param messageStoreConfig
+     * @param brokerStatsManager
+     * @param messageArrivingListener
+     * @param brokerConfig
+     * @throws IOException
+     */
     public DefaultMessageStore(final MessageStoreConfig messageStoreConfig, final BrokerStatsManager brokerStatsManager,
         final MessageArrivingListener messageArrivingListener, final BrokerConfig brokerConfig) throws IOException {
         this.messageArrivingListener = messageArrivingListener;
@@ -125,9 +134,12 @@ public class DefaultMessageStore implements MessageStore {
         this.messageStoreConfig = messageStoreConfig;
         this.brokerStatsManager = brokerStatsManager;
         this.allocateMappedFileService = new AllocateMappedFileService(this);
+        //如果启用了Dleger
         if (messageStoreConfig.isEnableDLegerCommitLog()) {
+            // 使用DLedgerCommitLog
             this.commitLog = new DLedgerCommitLog(this);
         } else {
+            // 否则使用CommitLog
             this.commitLog = new CommitLog(this);
         }
         this.consumeQueueTable = new ConcurrentHashMap<>(32);
@@ -356,12 +368,18 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * 主要是对主题的长度校验和消息属性的长度校验
+     * @param msg
+     * @return
+     */
     private PutMessageStatus checkMessage(MessageExtBrokerInner msg) {
+        // 如果主题的长度大于最大值
         if (msg.getTopic().length() > Byte.MAX_VALUE) {
             log.warn("putMessage message topic length too long " + msg.getTopic().length());
             return PutMessageStatus.MESSAGE_ILLEGAL;
         }
-
+        // 如果消息属性长度大于最大值
         if (msg.getPropertiesString() != null && msg.getPropertiesString().length() > Short.MAX_VALUE) {
             log.warn("putMessage message properties length too long " + msg.getPropertiesString().length());
             return PutMessageStatus.MESSAGE_ILLEGAL;
@@ -383,12 +401,22 @@ public class DefaultMessageStore implements MessageStore {
         return PutMessageStatus.PUT_OK;
     }
 
+    /**
+     * checkStoreStatus主要对Broker是否可以写入消息进行检查，包含以下几个方面：
+     *
+     * 1. MessageStore是否已经处于关闭状态，如果处于关闭状态不再受理消息的存储
+     * 2. Broker是否是从节点，从节点只能读不能写
+     * 3. Broker是否有写权限，如果没有写入权限，不能进行写入操作
+     * 4. 操作系统是否处于PAGECACHE繁忙状态，处于繁忙状态同样不能进行写入操作
+     * @return
+     */
     private PutMessageStatus checkStoreStatus() {
+        // 是否处于停止状态
         if (this.shutdown) {
             log.warn("message store has shutdown, so putMessage is forbidden");
             return PutMessageStatus.SERVICE_NOT_AVAILABLE;
         }
-
+        // 是否SLAVE角色
         if (BrokerRole.SLAVE == this.messageStoreConfig.getBrokerRole()) {
             long value = this.printTimes.getAndIncrement();
             if ((value % 50000) == 0) {
@@ -397,6 +425,7 @@ public class DefaultMessageStore implements MessageStore {
             return PutMessageStatus.SERVICE_NOT_AVAILABLE;
         }
 
+        // 是否可写
         if (!this.runningFlags.isWriteable()) {
             long value = this.printTimes.getAndIncrement();
             if ((value % 50000) == 0) {
@@ -407,7 +436,7 @@ public class DefaultMessageStore implements MessageStore {
         } else {
             this.printTimes.set(0);
         }
-
+        // 操作系统是否处于PAGECACHE繁忙状态
         if (this.isOSPageCacheBusy()) {
             return PutMessageStatus.OS_PAGECACHE_BUSY;
         }
@@ -416,17 +445,20 @@ public class DefaultMessageStore implements MessageStore {
 
     @Override
     public CompletableFuture<PutMessageResult> asyncPutMessage(MessageExtBrokerInner msg) {
+        // 校验存储状态
         PutMessageStatus checkStoreStatus = this.checkStoreStatus();
         if (checkStoreStatus != PutMessageStatus.PUT_OK) {
             return CompletableFuture.completedFuture(new PutMessageResult(checkStoreStatus, null));
         }
 
+        // 校验消息合法性
         PutMessageStatus msgCheckStatus = this.checkMessage(msg);
         if (msgCheckStatus == PutMessageStatus.MESSAGE_ILLEGAL) {
             return CompletableFuture.completedFuture(new PutMessageResult(msgCheckStatus, null));
         }
 
         long beginTime = this.getSystemClock().now();
+        // 调用CommitLog的asyncPutMessage方法写入消息
         CompletableFuture<PutMessageResult> putResultFuture = this.commitLog.asyncPutMessage(msg);
 
         putResultFuture.thenAccept((result) -> {
@@ -476,11 +508,13 @@ public class DefaultMessageStore implements MessageStore {
 
     @Override
     public PutMessageResult putMessage(MessageExtBrokerInner msg) {
+        // 校验存储状态
         PutMessageStatus checkStoreStatus = this.checkStoreStatus();
         if (checkStoreStatus != PutMessageStatus.PUT_OK) {
             return new PutMessageResult(checkStoreStatus, null);
         }
 
+        // 对主题的长度校验和消息属性的长度校验：
         PutMessageStatus msgCheckStatus = this.checkMessage(msg);
         if (msgCheckStatus == PutMessageStatus.MESSAGE_ILLEGAL) {
             return new PutMessageResult(msgCheckStatus, null);

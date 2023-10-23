@@ -25,8 +25,12 @@ import org.apache.rocketmq.common.message.MessageExtBatch;
 public interface AppendMessageCallback {
 
     /**
-     * After message serialization, write MapedByteBuffer
-     *
+     * After message serialization, write MapedByteBuffer(序列化之后写入消息)
+     * fileFromOffset：文件的起始位置偏移量
+     * byteBuffer：缓冲区，也就是上一步中创建的共享内存区
+     * maxBlank：上一步中可知传入的是文件总大小减去当前要写入的位置，也就是文件剩余空间大小
+     * msgInner：消息内容的封装体
+     * putMessageContext：消息写入上下文
      * @return How many bytes to write
      */
     AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer,

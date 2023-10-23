@@ -41,6 +41,24 @@ import org.apache.rocketmq.store.config.FlushDiskType;
 import org.apache.rocketmq.store.util.LibC;
 import sun.nio.ch.DirectBuffer;
 
+/**
+ * MappedFile可以看做是每一个Commitlog文件的映射，里面记录了文件的大小以及数据已经写入的位置，还有两个字节缓冲区ByteBuffer和MappedByteBuffer，
+ * MappedFile提供了两种方式来进行内容的写入：
+ *  第一种通过ByteBuffer分配缓冲区并将内容写入缓冲区，并且使用了暂存池对内存进行管理，需要时进行申请，使用完毕后回收，类似于数据库连接池。
+ *  第二种是通过MappedByteBuffer，对CommitLog进行文件映射，然后进行消息写入。
+ * 综上所述，开启使用暂存池时会使用ByteBuffer，否则使用MappedByteBuffer进行内容写入。
+ *
+ * 消息内容已经写入到内存缓冲区中，并且也知道准备进行写入的CommitLog对应的映射文件，接下来就可以调用MappedFile的appendMessagesInner
+ * 方法将内存中的内容写入映射文件，处理逻辑如下：
+ *  1. MappedFile中记录了文件的写入位置，获取准备写入的位置，如果写入的位置小于文件大小，意味着当前文件可以进行内容写入，反之说明此文件已写满
+ *     ，不能继续下一步，需要返回错误信息
+ *  2. 如果writeBuffer不为空，使用writeBuffer，否则使用mappedByteBuffer的slice方法创建一个与MappedFile共享的内存区byteBuffer
+ *     ，设置byteBuffer的写入位置，之后通过byteBuffer来进行消息写入，由于是共享内存区域，所以写入的内容会影响到writeBuffer或者mappedByteBuffer中
+ *  3. 调用回调函数的doAppend方法进行写入，前面可知回调函数是DefaultAppendMessageCallback类型的
+ *  4. 更新MappedFile写入位置，返回写入结果
+ *
+ **/
+
 public class MappedFile extends ReferenceResource {
     public static final int OS_PAGE_SIZE = 1024 * 4;
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
@@ -48,20 +66,35 @@ public class MappedFile extends ReferenceResource {
     private static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
 
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
+
+    /**
+     *记录文件的写入位置
+     */
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
+    /**
+     * 文件大小
+     */
     protected int fileSize;
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
+     * 字节缓冲区，用于在内存中分配空间，可以在JVM堆中分配内存（HeapByteBuffer），也可以在堆外分配内存（DirectByteBuffer）
      */
     protected ByteBuffer writeBuffer = null;
+
+    /**
+     * 是ByteBuffer的子类，它是将磁盘的文件内容映射到虚拟地址空间，通过虚拟地址访问物理内存中映射的文件内容，也叫文件映射，可以减少数据的拷贝。
+     */
+    private MappedByteBuffer mappedByteBuffer;
+    /**
+     * 暂存池，类似线程池，只不过池中存放的是申请的内存
+     */
     protected TransientStorePool transientStorePool = null;
     private String fileName;
     private long fileFromOffset;
     private File file;
-    private MappedByteBuffer mappedByteBuffer;
     private volatile long storeTimestamp = 0;
     private boolean firstCreateInQueue = false;
 
@@ -141,9 +174,17 @@ public class MappedFile extends ReferenceResource {
         return TOTAL_MAPPED_VIRTUAL_MEMORY.get();
     }
 
+    /**
+     *  初始化
+     * @param fileName
+     * @param fileSize
+     * @param transientStorePool
+     * @throws IOException
+     */
     public void init(final String fileName, final int fileSize,
         final TransientStorePool transientStorePool) throws IOException {
         init(fileName, fileSize);
+        // 从暂存池中获取一块内存
         this.writeBuffer = transientStorePool.borrowBuffer();
         this.transientStorePool = transientStorePool;
     }
@@ -158,7 +199,9 @@ public class MappedFile extends ReferenceResource {
         ensureDirOK(this.file.getParent());
 
         try {
+            // 获取文件
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
+            // 进行文件映射
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
             TOTAL_MAPPED_FILES.incrementAndGet();
@@ -188,7 +231,14 @@ public class MappedFile extends ReferenceResource {
         return fileChannel;
     }
 
+    /**
+     * 写入消息
+     * @param msg
+     * @param cb
+     * @return
+     */
     public AppendMessageResult appendMessage(final MessageExtBrokerInner msg, final AppendMessageCallback cb) {
+        // 调用appendMessagesInner
         return appendMessagesInner(msg, cb);
     }
 
@@ -199,20 +249,27 @@ public class MappedFile extends ReferenceResource {
     public AppendMessageResult appendMessagesInner(final MessageExt messageExt, final AppendMessageCallback cb) {
         assert messageExt != null;
         assert cb != null;
-
+        // 获取写入位置
         int currentPos = this.wrotePosition.get();
-
+        // 如果写指针小于文件大小
         if (currentPos < this.fileSize) {
+            // 如果writeBuffer不为空，使用writeBuffer的slice方法创建共享内存区，否则使用mappedByteBuffer
             ByteBuffer byteBuffer = writeBuffer != null ? writeBuffer.slice() : this.mappedByteBuffer.slice();
+            // 设置共享内存区的写入位置
             byteBuffer.position(currentPos);
             AppendMessageResult result;
+            // 单个消息处理
             if (messageExt instanceof MessageExtBrokerInner) {
+                // 通过共享内存区byteBuffer写入数据
                 result = cb.doAppend(this.getFileFromOffset(), byteBuffer, this.fileSize - currentPos, (MessageExtBrokerInner) messageExt);
             } else if (messageExt instanceof MessageExtBatch) {
+                // 批量消息
+                // 通过共享内存区byteBuffer写入数据
                 result = cb.doAppend(this.getFileFromOffset(), byteBuffer, this.fileSize - currentPos, (MessageExtBatch) messageExt);
             } else {
                 return new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR);
             }
+            // 更新MappedFile的写入位置
             this.wrotePosition.addAndGet(result.getWroteBytes());
             this.storeTimestamp = result.getStoreTimestamp();
             return result;
