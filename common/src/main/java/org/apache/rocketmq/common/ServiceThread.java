@@ -28,7 +28,13 @@ public abstract class ServiceThread implements Runnable {
     private static final long JOIN_TIME = 90 * 1000;
 
     private Thread thread;
+    /**
+     * CountDownLatch用于线程间的通信
+     */
     protected final CountDownLatch2 waitPoint = new CountDownLatch2(1);
+    /**
+     * 是否通知，初始化为false
+      */
     protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false);
     protected volatile boolean stopped = false;
     protected boolean isDaemon = false;
@@ -120,26 +126,47 @@ public abstract class ServiceThread implements Runnable {
         log.info("makestop thread " + this.getServiceName());
     }
 
+    /**
+     * 唤醒刷盘线程
+     */
     public void wakeup() {
+        // 更改状态为已通知状态
         if (hasNotified.compareAndSet(false, true)) {
+            // waitPoint的值减1，由于大小设置为1，减1之后变为0，会唤醒等待的线程
             waitPoint.countDown(); // notify
         }
     }
 
+    /**
+     * 线程被唤醒，执行刷盘前的操作： 
+     * waitForRunning方法中的await方法一直在等待countdown的值变为0，当上一步调用了wakeup后，就会唤醒该线程，然后开始往下执行，在finally
+     * 中可以看到将是否被通知hasNotified又设置为了false，然后调用了onWaitEnd方法，GroupCommitService方法中重写了该方法，里面又调用了
+     * swapRequests方法将读写请求列表的数据进行了交换，putRequest方法中将提交的刷盘请求放在了写链表中，经过交换，数据会被放在读链表中，
+     * 后续进行刷盘时会从读链表中获取请求进行处理。
+     * 
+     * 
+     * 
+     * @param interval
+     */
     protected void waitForRunning(long interval) {
+        // 判断hasNotified是否为true，并尝试将其更新为false
         if (hasNotified.compareAndSet(true, false)) {
+            // 调用onWaitEnd
             this.onWaitEnd();
             return;
         }
 
         //entry to wait
+        // 重置waitPoint的值，也就是值为1
         waitPoint.reset();
 
         try {
+            // 会一直等待waitPoint值降为0
             waitPoint.await(interval, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             log.error("Interrupted", e);
         } finally {
+            // 是否被通知设置为false
             hasNotified.set(false);
             this.onWaitEnd();
         }

@@ -71,7 +71,13 @@ public class MappedFile extends ReferenceResource {
      *记录文件的写入位置
      */
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
+    /**
+     * 数据提交位置
+     */
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
+    /**
+     * 数据flush位置
+     */
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
     /**
      * 文件大小
@@ -322,17 +328,31 @@ public class MappedFile extends ReferenceResource {
         return false;
     }
 
+
     /**
-     * @return The current flushed position
+     * 进行刷盘并返回flush后的偏移量
+     * flush的逻辑也与commit方法的逻辑类似：
+     *      1. 调用isAbleToFlush判断是否满足刷盘条件，获取上次flush位置偏移量和当前写入位置偏移量进行如下校验：
+     *          a. 文件是否已写满，即文件大小是否与写入数据位置相等，如果相等说明文件已经写满需要执行刷盘，满足刷盘条件
+     *          b. 如果最少flush页数大于0，计算本次flush的页数是否大于或等于最少flush页数，如果满足可以进行刷盘
+     *              本次flush数据的页数计算方法：写入位置/页大小 - flush位置/页大小
+     *          c. 如果写入位置偏移量是否大于flush位置偏移量，如果大于表示有数据未进行刷盘，满足刷盘条件
+     *      2. 调用fileChannel的force或者mappedByteBuffer的force方法进行刷盘
+     *      3. 记录本次flush的位置，并作为结果返回
+     * @param flushLeastPages
+     * @return
      */
     public int flush(final int flushLeastPages) {
+        // 是否可以刷盘
         if (this.isAbleToFlush(flushLeastPages)) {
             if (this.hold()) {
                 int value = getReadPosition();
 
                 try {
                     //We only append data to fileChannel or mappedByteBuffer, never both.
+                    // 如果writeBuffer不为空
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
+                        // 将数据刷到硬盘
                         this.fileChannel.force(false);
                     } else {
                         this.mappedByteBuffer.force();
@@ -340,7 +360,7 @@ public class MappedFile extends ReferenceResource {
                 } catch (Throwable e) {
                     log.error("Error occurred when force data to disk.", e);
                 }
-
+                // 记录flush位置
                 this.flushedPosition.set(value);
                 this.release();
             } else {
@@ -348,16 +368,30 @@ public class MappedFile extends ReferenceResource {
                 this.flushedPosition.set(getReadPosition());
             }
         }
+        // 返回flush位置
         return this.getFlushedPosition();
     }
-
+    /**
+     * MappedFile中记录CommitLog的写入位置wrotePosition、提交位置committedPosition以及flush位置flushedPosition，在commit方法中
+     * ，调用了isAbleToCommit判断是否可以提交数据，判断的流程如下:
+     *      1. 获取提交数据的位置偏移量和写入数据的位置偏移量
+     *      2. 如果最少提交页数大于0，计算本次写入的页数是否大于或等于最少提交页数
+     *          本次写入数据的页数计算方法：写入位置/页大小 - flush位置/页大小
+     *      3. 如果以上条件都满足，判断写入位置是否大于flush位置，如果大于表示有一部数据未flush可以进行提交
+     * 满足提交条件后，就会调用commit0方法提交数据，将数据写入到fileChannel中
+     * @return The current flushed position
+     */
     public int commit(final int commitLeastPages) {
+        // 如果writeBuffer为空
         if (writeBuffer == null) {
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
+            // 不需要提交任何数据到，返回之前记录的写入位置
             return this.wrotePosition.get();
         }
+        // 如果可以提交数据
         if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
+                // 提交数据
                 commit0(commitLeastPages);
                 this.release();
             } else {
@@ -370,21 +404,27 @@ public class MappedFile extends ReferenceResource {
             this.transientStorePool.returnBuffer(writeBuffer);
             this.writeBuffer = null;
         }
-
+        // 返回提交位置
         return this.committedPosition.get();
     }
 
     protected void commit0(final int commitLeastPages) {
+        // 获取写入位置
         int writePos = this.wrotePosition.get();
+        // 获取上次提交的位置
         int lastCommittedPosition = this.committedPosition.get();
 
         if (writePos - lastCommittedPosition > commitLeastPages) {
             try {
+                // 创建共享缓冲区
                 ByteBuffer byteBuffer = writeBuffer.slice();
+                // 设置上一次提交位置
                 byteBuffer.position(lastCommittedPosition);
                 byteBuffer.limit(writePos);
                 this.fileChannel.position(lastCommittedPosition);
+                // 数据写入fileChannel
                 this.fileChannel.write(byteBuffer);
+                // 更新写入的位置
                 this.committedPosition.set(writePos);
             } catch (Throwable e) {
                 log.error("Error occurred when commit data to FileChannel.", e);
@@ -392,33 +432,50 @@ public class MappedFile extends ReferenceResource {
         }
     }
 
+    /**
+     * 是否可以刷盘
+     * @param flushLeastPages
+     * @return
+     */
     private boolean isAbleToFlush(final int flushLeastPages) {
+        // 获取上次flush位置
         int flush = this.flushedPosition.get();
+        // 写入位置偏移量
         int write = getReadPosition();
 
         if (this.isFull()) {
             return true;
         }
-
+        // 如果flush的页数大于0，校验本次flush的页数是否满足条件
         if (flushLeastPages > 0) {
+            // 本次flush的页数：写入位置偏移量/OS_PAGE_SIZE - 上次flush位置偏移量/OS_PAGE_SIZE，是否大于flushLeastPages
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
 
+        // 写入位置偏移量是否大于flush位置偏移量
         return write > flush;
     }
 
+    /**
+     * 是否可以提交数据
+     * @param commitLeastPages
+     * @return
+     */
     protected boolean isAbleToCommit(final int commitLeastPages) {
+        // 获取提交数据的位置偏移量
         int flush = this.committedPosition.get();
+        // 获取写入数据的位置偏移量
         int write = this.wrotePosition.get();
 
         if (this.isFull()) {
             return true;
         }
-
+        // 如果最少提交页数大于0
         if (commitLeastPages > 0) {
+            // 写入位置/页大小 - flush位置/页大小 是否大于至少提交的页数
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= commitLeastPages;
         }
-
+        // 判断是否需要flush数据
         return write > flush;
     }
 
@@ -430,7 +487,12 @@ public class MappedFile extends ReferenceResource {
         this.flushedPosition.set(pos);
     }
 
+    /**
+     * 文件是否已写满
+     * @return
+     */
     public boolean isFull() {
+        // 文件大小是否与写入数据位置相等
         return this.fileSize == this.wrotePosition.get();
     }
 
@@ -528,9 +590,12 @@ public class MappedFile extends ReferenceResource {
     }
 
     /**
+     * 返回当前有效数据的位置
      * @return The max position which have valid data
+     *
      */
     public int getReadPosition() {
+        // 如果writeBuffer为空使用写入位置，否则使用提交位置
         return this.writeBuffer == null ? this.wrotePosition.get() : this.committedPosition.get();
     }
 

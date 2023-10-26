@@ -43,7 +43,13 @@ public class MappedFileQueue {
 
     private final AllocateMappedFileService allocateMappedFileService;
 
+    /**
+     * flush的位置偏移量
+     */
     private long flushedWhere = 0;
+    /**
+     * 提交的位置偏移量
+     */
     private long committedWhere = 0;
 
     private volatile long storeTimestamp = 0;
@@ -422,30 +428,63 @@ public class MappedFileQueue {
         return deleteCount;
     }
 
+    /**
+     * flush刷盘
+     * 刷盘的方法在MappedFileQueue的flush方法中实现，处理逻辑如下：
+     *      1. 根据 flush的位置偏移量获取映射文件
+     *      2. 调用mappedFile的flush方法进行刷盘，并返回刷盘后的位置偏移量
+     *      3. 计算最新的flush偏移量
+     *      4. 更新flushedWhere的值为最新的flush偏移量
+     * @param flushLeastPages
+     * @return
+     */
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
+
+        // 获取flush的位置偏移量映射文件
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
+            // 获取时间戳
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+            // 调用MappedFile的flush方法进行刷盘，返回刷盘后的偏移量
             int offset = mappedFile.flush(flushLeastPages);
+            // 计算最新的flush偏移量
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.flushedWhere;
+            // 更新flush偏移量
             this.flushedWhere = where;
             if (0 == flushLeastPages) {
                 this.storeTimestamp = tmpTimeStamp;
             }
         }
-
+        // 返回flush的偏移量
         return result;
     }
-
+    /**
+     * 刷盘的方法在MappedFileQueue的commit方法中实现，处理逻辑如下：
+     *      1. 根据记录的CommitLog文件提交位置的偏移量获取映射文件，如果获取不为空，调用MappedFile的commit方法进行提交，然后返回本次提交数据的偏移量
+     *      2. 记录本次提交的偏移量：文件的偏移量 + 提交数据的偏移量
+     *      3. 判断本次提交的偏移量是否等于上一次的提交偏移量，如果等于表示本次未提交任何数据，返回结果置为true，否则表示提交了数据，等待刷盘，返回结果为false
+     *      4. 更新上一次提交偏移量committedWhere的值为本次的提交偏移量的值
+     *
+     *
+     *
+     *
+     * @param commitLeastPages
+     * @return
+     */
     public boolean commit(final int commitLeastPages) {
         boolean result = true;
+        // 根据提交位置的偏移量获取映射文件
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
+            // 调用mappedFile的commit方法进行提交，返回提交数据的偏移量
             int offset = mappedFile.commit(commitLeastPages);
+            // 记录本次提交的偏移量：文件的偏移量 + 提交数据的偏移量
             long where = mappedFile.getFileFromOffset() + offset;
+            // 设置返回结果，如果本次提交偏移量等于上一次的提交偏移量为true，表示什么也没干，否则表示提交了数据，等待刷盘
             result = where == this.committedWhere;
+            // 更新上一次提交偏移量的值为本次的
             this.committedWhere = where;
         }
 

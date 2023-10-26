@@ -296,6 +296,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         this.flushConsumeQueueService.start();
+        // 调用CommitLog的启动方法,里面会启动刷盘线程
         this.commitLog.start();
         this.storeStatsService.start();
 
