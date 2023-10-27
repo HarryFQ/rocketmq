@@ -44,9 +44,18 @@ public class MQClientManager {
         return getOrCreateMQClientInstance(clientConfig, null);
     }
 
+    /**
+     * 以clientId为单位的，也就是说相同clientId的共用一个MQClientInstance
+     * @param clientConfig
+     * @param rpcHook
+     * @return
+     */
     public MQClientInstance getOrCreateMQClientInstance(final ClientConfig clientConfig, RPCHook rpcHook) {
+        // 获取clientId=clientIp@Default@unitName(服务器ClientIP + @ + 实例名称 + @ + 单元名称)
         String clientId = clientConfig.buildMQClientId();
+        // 根据ID获取MQClientInstance
         MQClientInstance instance = this.factoryTable.get(clientId);
+        // 如果为空，重新创建
         if (null == instance) {
             instance =
                 new MQClientInstance(clientConfig.cloneClientConfig(),

@@ -27,8 +27,16 @@ import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.common.utils.ThreadUtils;
 
+/**
+ * PullMessageService继承了ServiceThread，并且使用了阻塞队列pullRequestQueue存储消息拉取请求，PullMessageService被启动后
+ * ，在run方法中等待pullRequestQueue中拉取请求的到来，然后调用pullMessage方法拉取消息， 在pullMessage中又是调用DefaultMQPushConsumerImpl
+ * 的pullMessage进行消息拉取的.
+ */
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
+    /**
+     * 拉取请求阻塞队列
+     */
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();
     private final MQClientInstance mQClientFactory;
     private final ScheduledExecutorService scheduledExecutorService = Executors
@@ -43,6 +51,11 @@ public class PullMessageService extends ServiceThread {
         this.mQClientFactory = mQClientFactory;
     }
 
+    /**
+     * 稍后执行拉取请求
+     * @param pullRequest
+     * @param timeDelay
+     */
     public void executePullRequestLater(final PullRequest pullRequest, final long timeDelay) {
         if (!isStopped()) {
             this.scheduledExecutorService.schedule(new Runnable() {
@@ -56,8 +69,14 @@ public class PullMessageService extends ServiceThread {
         }
     }
 
+    /**
+     * 拉取请求添加到了阻塞队列pullRequestQueue
+     * 上层：DefaultMQPushConsumerImpl的executePullRequestImmediately方法中调用了PullMessageService的executePullRequestImmediately方法。
+     * @param pullRequest
+     */
     public void executePullRequestImmediately(final PullRequest pullRequest) {
         try {
+            // 向队列中添加拉取消息的请求信息
             this.pullRequestQueue.put(pullRequest);
         } catch (InterruptedException e) {
             log.error("executePullRequestImmediately pullRequestQueue.put", e);
@@ -76,24 +95,37 @@ public class PullMessageService extends ServiceThread {
         return scheduledExecutorService;
     }
 
+    /**
+     * 拉取消息
+     *
+     * @param pullRequest
+     */
     private void pullMessage(final PullRequest pullRequest) {
         final MQConsumerInner consumer = this.mQClientFactory.selectConsumer(pullRequest.getConsumerGroup());
         if (consumer != null) {
+            // 转换为DefaultMQPushConsumerImpl
             DefaultMQPushConsumerImpl impl = (DefaultMQPushConsumerImpl) consumer;
+            // 调用pullMessage拉取消息
             impl.pullMessage(pullRequest);
         } else {
             log.warn("No matched consumer for the PullRequest {}, drop it", pullRequest);
         }
     }
 
+    /**
+     * 没消息时阻塞队列阻塞：
+     * 这里可能会有一个疑问，既然PullMessageService在等待拉取请求的到来，那么什么时候会往pullRequestQueue中添加拉取消息的请求？
+     *  可以看到在PullMessageService的executePullRequestImmediately方法中，将拉取请求添加到了阻塞队列pullRequestQueue中
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");
-
+        // 如果没有暂停的话，就一直死循环，没有拉消息的请求的话就阻塞。
         while (!this.isStopped()) {
             try {
-                // 有一个阻塞队列
+                //  拉取消息 有一个阻塞队列，没有消息就阻塞
                 PullRequest pullRequest = this.pullRequestQueue.take();
+                // 拉取消息
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {
             } catch (Exception e) {

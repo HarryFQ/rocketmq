@@ -180,6 +180,7 @@ public class BrokerController {
         this.messageStoreConfig = messageStoreConfig;
         this.consumerOffsetManager = new ConsumerOffsetManager(this);
         this.topicConfigManager = new TopicConfigManager(this);
+        //  创建PullMessageProcessor（处理客户端拉取消息的处理器），处理从客户端(org.apache.rocketmq.client.impl.MQClientAPIImpl.pullMessage)发送过来的请求
         this.pullMessageProcessor = new PullMessageProcessor(this);
         this.pullRequestHoldService = new PullRequestHoldService(this);
         this.messageArrivingListener = new NotifyMessageArrivingListener(this.pullRequestHoldService);
@@ -591,6 +592,7 @@ public class BrokerController {
         this.fastRemotingServer.registerProcessor(RequestCode.CONSUMER_SEND_MSG_BACK, sendProcessor, this.sendMessageExecutor);
         /**
          * PullMessageProcessor
+         * 注册客户端消息拉取的请求处理器
          */
         this.remotingServer.registerProcessor(RequestCode.PULL_MESSAGE, this.pullMessageProcessor, this.pullMessageExecutor);
         this.pullMessageProcessor.registerConsumeMessageHook(consumeMessageHookList);

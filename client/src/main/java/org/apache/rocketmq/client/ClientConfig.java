@@ -62,14 +62,24 @@ public class ClientConfig {
 
     private LanguageCode language = LanguageCode.JAVA;
 
+    /**
+     * clientId的拼接规则如下：
+     * 应用服务器IP + @ + 实例名称 + @ + 单元名称
+     * 所以同一个服务器上，如果实例名称和单元名称也相同，它们将共享同一个MQClientInstance：
+     * @return
+     */
     public String buildMQClientId() {
         StringBuilder sb = new StringBuilder();
+        // ip
         sb.append(this.getClientIP());
 
         sb.append("@");
+        // 实例名称(默认值default)
         sb.append(this.getInstanceName());
+        // 单元名称不为空
         if (!UtilAll.isBlank(this.unitName)) {
             sb.append("@");
+            // 拼接单元名称
             sb.append(this.unitName);
         }
 

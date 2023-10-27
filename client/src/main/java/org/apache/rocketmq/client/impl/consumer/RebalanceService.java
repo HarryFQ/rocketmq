@@ -26,18 +26,28 @@ public class RebalanceService extends ServiceThread {
         Long.parseLong(System.getProperty(
             "rocketmq.client.rebalance.waitInterval", "20000"));
     private final InternalLogger log = ClientLogger.getLog();
+    /**
+     * 引用了MQClientInstance
+     */
     private final MQClientInstance mqClientFactory;
 
     public RebalanceService(MQClientInstance mqClientFactory) {
+        // 设置MQClientInstance
         this.mqClientFactory = mqClientFactory;
     }
 
+    /**
+     * 在RebalanceService的run方法中，调用了waitForRunning方法进行阻塞等待，如果负责均衡服务被唤醒，
+     * 将会调用MQClientInstance的doRebalance进行负载均衡.
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");
 
         while (!this.isStopped()) {
+            // 等待运行
             this.waitForRunning(waitInterval);
+            // 进行负载均衡
             this.mqClientFactory.doRebalance();
         }
 

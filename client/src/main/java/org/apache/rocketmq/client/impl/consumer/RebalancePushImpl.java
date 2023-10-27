@@ -211,9 +211,15 @@ public class RebalancePushImpl extends RebalanceImpl {
         return result;
     }
 
+    /**
+     * 对pullRequestList进行了遍历，然后将每一个拉取请求调用defaultMQPushConsumerImpl的executePullRequestImmediately方法添加到
+     * 了PullMessageService的阻塞队列中等待进行消息拉取
+     * @param pullRequestList
+     */
     @Override
     public void dispatchPullRequest(List<PullRequest> pullRequestList) {
         for (PullRequest pullRequest : pullRequestList) {
+            // 加入到阻塞队列中
             this.defaultMQPushConsumerImpl.executePullRequestImmediately(pullRequest);
             log.info("doRebalance, {}, add a new pull request {}", consumerGroup, pullRequest);
         }

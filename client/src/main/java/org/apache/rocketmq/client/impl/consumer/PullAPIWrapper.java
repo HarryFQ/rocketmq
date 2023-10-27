@@ -141,6 +141,26 @@ public class PullAPIWrapper {
         }
     }
 
+    /**
+     * PullAPIWrapper中主要是获取了Broker的地址，然后创建拉取请求头PullMessageRequestHeader，设置拉取的相关信息，然后调用MQClientAPIImpl的pullMessage拉取消息：
+     * @param mq
+     * @param subExpression
+     * @param expressionType
+     * @param subVersion
+     * @param offset
+     * @param maxNums
+     * @param sysFlag
+     * @param commitOffset
+     * @param brokerSuspendMaxTimeMillis
+     * @param timeoutMillis
+     * @param communicationMode
+     * @param pullCallback
+     * @return
+     * @throws MQClientException
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public PullResult pullKernelImpl(
         final MessageQueue mq,
         final String subExpression,
@@ -155,6 +175,7 @@ public class PullAPIWrapper {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+        // 根据BrokerName获取Broker信息
         FindBrokerResult findBrokerResult =
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
                 this.recalculatePullFromWhichNode(mq), false);
@@ -179,20 +200,29 @@ public class PullAPIWrapper {
             if (findBrokerResult.isSlave()) {
                 sysFlagInner = PullSysFlag.clearCommitOffsetFlag(sysFlagInner);
             }
-
+            // 创建拉取消息的请求头
             PullMessageRequestHeader requestHeader = new PullMessageRequestHeader();
+            // 设置消费组
             requestHeader.setConsumerGroup(this.consumerGroup);
+            // 设置主题
             requestHeader.setTopic(mq.getTopic());
+            // 设置队列ID
             requestHeader.setQueueId(mq.getQueueId());
+            // 设置拉取偏移量
             requestHeader.setQueueOffset(offset);
+            // 设置拉取最大消息个数
             requestHeader.setMaxMsgNums(maxNums);
+            // 设置系统标识
             requestHeader.setSysFlag(sysFlagInner);
+            // 设置commit偏移量
             requestHeader.setCommitOffset(commitOffset);
             requestHeader.setSuspendTimeoutMillis(brokerSuspendMaxTimeMillis);
+            // 设置订阅主题表达式
             requestHeader.setSubscription(subExpression);
             requestHeader.setSubVersion(subVersion);
             requestHeader.setExpressionType(expressionType);
 
+            // 获取Broker地址
             String brokerAddr = findBrokerResult.getBrokerAddr();
             if (PullSysFlag.hasClassFilterFlag(sysFlagInner)) {
                 brokerAddr = computePullFromWhichFilterServer(mq.getTopic(), brokerAddr);

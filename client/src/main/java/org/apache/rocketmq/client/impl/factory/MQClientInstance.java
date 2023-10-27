@@ -96,6 +96,9 @@ public class MQClientInstance {
      * value:producer
      */
     private final ConcurrentMap<String/* group */, MQProducerInner> producerTable = new ConcurrentHashMap<String, MQProducerInner>();
+    /**
+     * 消费者组信息，key为消费者组名称(consumerGroup)，value为注册的消费者，上面可知在start方法中调用了registerConsumer方法进行了消费者注册
+     */
     private final ConcurrentMap<String/* group */, MQConsumerInner> consumerTable = new ConcurrentHashMap<String, MQConsumerInner>();
     private final ConcurrentMap<String/* group */, MQAdminExtInner> adminExtTable = new ConcurrentHashMap<String, MQAdminExtInner>();
     private final NettyClientConfig nettyClientConfig;
@@ -115,7 +118,18 @@ public class MQClientInstance {
         }
     });
     private final ClientRemotingProcessor clientRemotingProcessor;
+    /***********
+     * todo : RebalanceService和PullMessageService都继承了ServiceThread，在MQClientInstance的start方法中，分别调用了
+     * pullMessageService和rebalanceService的start方法启动拉取服务线程和负载均衡线程.
+     * **********/
+    /**
+     * 对应实现类为PullMessageService，是用来拉取消息的服务
+     */
     private final PullMessageService pullMessageService;
+
+    /**
+     * 对应的实现类为RebalanceService，是用来进行负载均衡的服务
+     */
     private final RebalanceService rebalanceService;
     private final DefaultMQProducer defaultMQProducer;
     private final ConsumerStatsManager consumerStatsManager;
@@ -134,6 +148,7 @@ public class MQClientInstance {
         this.nettyClientConfig.setClientCallbackExecutorThreads(clientConfig.getClientCallbackExecutorThreads());
         this.nettyClientConfig.setUseTLS(clientConfig.isUseTLS());
         this.clientRemotingProcessor = new ClientRemotingProcessor(this);
+        // 创建MQClientAPIImpl
         this.mQClientAPIImpl = new MQClientAPIImpl(this.nettyClientConfig, this.clientRemotingProcessor, rpcHook, clientConfig);
 
         if (this.clientConfig.getNamesrvAddr() != null) {
@@ -145,8 +160,10 @@ public class MQClientInstance {
 
         this.mQAdminImpl = new MQAdminImpl(this);
 
+        // 创建拉取消息service
         this.pullMessageService = new PullMessageService(this);
 
+        // 创建负载均衡service，并在构造函数中传入了当前对象
         this.rebalanceService = new RebalanceService(this);
 
         this.defaultMQProducer = new DefaultMQProducer(MixAll.CLIENT_INNER_PRODUCER_GROUP);
@@ -242,8 +259,12 @@ public class MQClientInstance {
                     // Start various schedule tasks
                     this.startScheduledTask();
                     // Start pull service
+                    // 启动拉取消息服务
                     this.pullMessageService.start();
                     // Start rebalance service
+                    // 启动负载均衡服务
+                    // 启动了负责均衡服务的线程，在RebalanceService的run方法中，调用了waitForRunning方法进行阻塞等待，如果负责均衡
+                    // 服务被唤醒，将会调用MQClientInstance的doRebalance进行负载均衡
                     this.rebalanceService.start();
                     // Start push service
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
@@ -915,11 +936,17 @@ public class MQClientInstance {
         }
     }
 
+    /**
+     * 注册消费者
+     * @param group
+     * @param consumer
+     * @return
+     */
     public boolean registerConsumer(final String group, final MQConsumerInner consumer) {
         if (null == group || null == consumer) {
             return false;
         }
-
+        // 将消费者组信息添加到consumerTable中
         MQConsumerInner prev = this.consumerTable.putIfAbsent(group, consumer);
         if (prev != null) {
             log.warn("the consumer group[" + group + "] exist already.");
@@ -1016,15 +1043,27 @@ public class MQClientInstance {
         this.adminExtTable.remove(group);
     }
 
+    /**
+     * DefaultMQPushConsumerImpl在启动的时候调用了MQClientInstance的rebalanceImmediately方法，在rebalanceImmediately方法中
+     * 可以看到，调用了rebalanceService的wakeup方法唤醒负载均衡线程
+     */
     public void rebalanceImmediately() {
+        // 唤醒负载均衡服务
         this.rebalanceService.wakeup();
     }
 
+    /**
+     * 负责均衡服务被唤醒后，会调用MQClientInstance的doRebalance进行负载均衡，处理逻辑如下：
+     *  1. 从consumerTable中获取注册的消费者组信息，前面可知consumerTable中存放了注册的消费者信息，Key为组名称，value为消费者
+     *  2. 对consumerTable进行遍历，调用消费者的doRebalance方法对每一个消费者进行负载均衡，前面可知消费者是DefaultMQPushConsumerImpl类型的
+     */
     public void doRebalance() {
+        // 遍历注册的消费者
         for (Map.Entry<String, MQConsumerInner> entry : this.consumerTable.entrySet()) {
             MQConsumerInner impl = entry.getValue();
             if (impl != null) {
                 try {
+                    // 负载均衡，前面可知消费者是DefaultMQPushConsumerImpl类型的
                     impl.doRebalance();
                 } catch (Throwable e) {
                     log.error("doRebalance exception", e);

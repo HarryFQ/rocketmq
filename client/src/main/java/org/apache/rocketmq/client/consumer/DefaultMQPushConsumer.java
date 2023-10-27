@@ -59,6 +59,11 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
  * <p>
  * <strong>Thread Safety:</strong> After initialization, the instance can be regarded as thread-safe.
  * </p>
+ * 推模式DefaultMQPushConsumer进行消费的例子，首先为消费者设置了消费者组名称，然后注册了消息监听器，并设置订阅的主题，最后调用start方法启动消费者，接下来就去看看DefaultMQPushConsumer如何进行消息消费的；
+ * TODO 1. 推送模式的入口，用户从这里开始。
+ *
+ *
+ *
  */
 public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsumer {
 
@@ -341,6 +346,7 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
         this.consumerGroup = consumerGroup;
         this.namespace = namespace;
         this.allocateMessageQueueStrategy = allocateMessageQueueStrategy;
+        // 它引用了默认的消息推送实现类DefaultMQPushConsumerImpl，在构造函数中可以看到对其进行了实例化，并在start方法中进行了启动
         defaultMQPushConsumerImpl = new DefaultMQPushConsumerImpl(this, rpcHook);
     }
 
@@ -693,13 +699,15 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
     }
 
     /**
-     * This method gets internal infrastructure readily to serve. Instances must call this method after configuration.
+     * This method gets internal infrastructure readily to serve.
+     * Instances must call this method after configuration.
      *
      * @throws MQClientException if there is any client error.
      */
     @Override
     public void start() throws MQClientException {
         setConsumerGroup(NamespaceUtil.wrapNamespace(this.getNamespace(), this.consumerGroup));
+        //2. 启动消息推送实现类DefaultMQPushConsumerImpl（启动消费者）
         this.defaultMQPushConsumerImpl.start();
         if (null != traceDispatcher) {
             try {

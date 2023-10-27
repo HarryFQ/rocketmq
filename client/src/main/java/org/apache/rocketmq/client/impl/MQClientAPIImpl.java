@@ -704,6 +704,24 @@ public class MQClientAPIImpl {
         return sendResult;
     }
 
+    /**
+     * 发送请求拉取消息
+     * 1. 首先构建了远程请求RemotingCommand，可以看到请求类型设置的是拉取消息PULL_MESSAGE：
+     *  a. 异步调用pullMessageAsync方法拉取消息
+     *  b. 同步调用pullMessageSync方法拉取消息
+     * 2. 以异步消息拉取pullMessageAsync为例，看一下请求的发送：
+     *  a. 通过invokeAsync向Broker发送拉取消息的请求
+     *  b. 在请求返回响应的时候，进行判断，如果响应不为空，调用processPullResponse处理响应内容，然后调用回调函数PullCallback的onSuccess方法处理消息
+     * @param addr
+     * @param requestHeader
+     * @param timeoutMillis
+     * @param communicationMode
+     * @param pullCallback
+     * @return
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public PullResult pullMessage(
         final String addr,
         final PullMessageRequestHeader requestHeader,
@@ -711,6 +729,7 @@ public class MQClientAPIImpl {
         final CommunicationMode communicationMode,
         final PullCallback pullCallback
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        // 构建请求,这里可以看到请求类型是拉取消息PULL_MESSAGE
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, requestHeader);
 
         switch (communicationMode) {
@@ -718,9 +737,11 @@ public class MQClientAPIImpl {
                 assert false;
                 return null;
             case ASYNC:
+                // 异步
                 this.pullMessageAsync(addr, request, timeoutMillis, pullCallback);
                 return null;
             case SYNC:
+                // 同步
                 return this.pullMessageSync(addr, request, timeoutMillis);
             default:
                 assert false;
@@ -730,20 +751,34 @@ public class MQClientAPIImpl {
         return null;
     }
 
+    /**
+     * 异步发送请求拉取消息
+     * @param addr
+     * @param request
+     * @param timeoutMillis
+     * @param pullCallback
+     * @throws RemotingException
+     * @throws InterruptedException
+     */
     private void pullMessageAsync(
         final String addr,
         final RemotingCommand request,
         final long timeoutMillis,
         final PullCallback pullCallback
     ) throws RemotingException, InterruptedException {
+
+        // 发送请求
         this.remotingClient.invokeAsync(addr, request, timeoutMillis, new InvokeCallback() {
             @Override
             public void operationComplete(ResponseFuture responseFuture) {
+                // 获取响应
                 RemotingCommand response = responseFuture.getResponseCommand();
                 if (response != null) {
                     try {
+                        // 处理响应
                         PullResult pullResult = MQClientAPIImpl.this.processPullResponse(response, addr);
                         assert pullResult != null;
+                        // 调用回调函数处理  在（DefaultMQPushConsumerImpl 创建），回调用broker 在BrokerController 注册PullMessageProcessor 的处理器
                         pullCallback.onSuccess(pullResult);
                     } catch (Exception e) {
                         pullCallback.onException(e);
