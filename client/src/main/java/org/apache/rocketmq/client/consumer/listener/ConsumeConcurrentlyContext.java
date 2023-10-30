@@ -20,6 +20,7 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
  * Consumer concurrent consumption context
+ * 并发消费上下文
  */
 public class ConsumeConcurrentlyContext {
     private final MessageQueue messageQueue;
@@ -28,8 +29,11 @@ public class ConsumeConcurrentlyContext {
      * -1,no retry,put into DLQ directly<br>
      * 0,broker control retry frequency<br>
      * >0,client control retry frequency
+     * -1，不进行重试，加入DLQ队列
+     * 0, Broker控制重试频率
+     * >0, 客户端控制
      */
-    private int delayLevelWhenNextConsume = 0;
+    private int delayLevelWhenNextConsume = 0;// 默认为0
     private int ackIndex = Integer.MAX_VALUE;
 
     public ConsumeConcurrentlyContext(MessageQueue messageQueue) {

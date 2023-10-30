@@ -1124,6 +1124,18 @@ public class MQClientAPIImpl {
         return response.getCode() == ResponseCode.SUCCESS;
     }
 
+    /**
+     * consumerSendMessageBack方法中，可以看到设置的请求类型是CONSUMER_SEND_MSG_BACK，然后设置了消息的相关信息，向Broker发送请求
+     * @param addr
+     * @param msg
+     * @param consumerGroup
+     * @param delayLevel
+     * @param timeoutMillis
+     * @param maxConsumeRetryTimes
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public void consumerSendMessageBack(
         final String addr,
         final MessageExt msg,
@@ -1132,16 +1144,24 @@ public class MQClientAPIImpl {
         final long timeoutMillis,
         final int maxConsumeRetryTimes
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        // 创建请求头
         ConsumerSendMsgBackRequestHeader requestHeader = new ConsumerSendMsgBackRequestHeader();
+        // 设置请求类型为CONSUMER_SEND_MSG_BACK
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONSUMER_SEND_MSG_BACK, requestHeader);
 
+        // 设置消费组
         requestHeader.setGroup(consumerGroup);
         requestHeader.setOriginTopic(msg.getTopic());
+        // 设置消息物理偏移量
         requestHeader.setOffset(msg.getCommitLogOffset());
+        // 设置延迟级别
         requestHeader.setDelayLevel(delayLevel);
+        // 设置消息ID
         requestHeader.setOriginMsgId(msg.getMsgId());
+        // 设置最大消费次数
         requestHeader.setMaxReconsumeTimes(maxConsumeRetryTimes);
 
+        // 向Broker发送请求 {@see SendMessageProcessor}
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
             request, timeoutMillis);
         assert response != null;

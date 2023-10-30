@@ -257,6 +257,7 @@ public class MQClientInstance {
                     // Start request-response channel
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
+                    //
                     this.startScheduledTask();
                     // Start pull service
                     // 启动拉取消息服务
@@ -319,11 +320,14 @@ public class MQClientInstance {
             }
         }, 1000, this.clientConfig.getHeartbeatBrokerInterval(), TimeUnit.MILLISECONDS);
 
+
+        // 注册定时任务，定时持久化拉取进度
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
             public void run() {
                 try {
+                    // 持久化
                     MQClientInstance.this.persistAllConsumerOffset();
                 } catch (Exception e) {
                     log.error("ScheduledTask persistAllConsumerOffset exception", e);
@@ -511,6 +515,7 @@ public class MQClientInstance {
         while (it.hasNext()) {
             Entry<String, MQConsumerInner> entry = it.next();
             MQConsumerInner impl = entry.getValue();
+            // 调用persistConsumerOffset进行持久化
             impl.persistConsumerOffset();
         }
     }

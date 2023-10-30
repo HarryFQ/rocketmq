@@ -92,8 +92,22 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
     }
 
     /**
+     * TODO
      * 异步处理发送消息的请求:
-     * 从请求中解析请求头数据，并判断是否是批量发送消息的请求，如果是批量发送消息调用asyncSendBatchMessage方法处理，否则调用asyncSendMessage方法处理单个消息
+     * 1. 从请求中解析请求头数据，并判断是否是批量发送消息的请求，如果是批量发送消息调用asyncSendBatchMessage方法处理，否则调用asyncSendMessage方法处理单个消息
+     *
+     * 2. Broker对CONSUMER_SEND_MSG_BACK类型的请求在SendMessageProcessor中，处理逻辑如下：
+     *  1. 根据消费组获取订阅信息配置，如果获取为空，记录错误信息，直接返回
+     *  2. 获取消费组的重试主题，然后从重试队列中随机选取一个队列，并创建TopicConfig主题配置信息
+     *  3. 根据消息的物理偏移量从commitlog中获取消息
+     *  4. 判断消息的消费次数是否大于等于最大消费次数 或者 延迟等级小于0：
+     *      a. 如果条件满足，表示需要把消息放入到死信队列DLQ中，此时设置DLQ队列ID
+     *      b. 如果不满足，判断延迟级别是否为0，如果为0，使用3 + 消息的消费次数作为新的延迟级别
+     *  5.  新建消息MessageExtBrokerInner，设置消息的相关信息，此时相当于生成了一个全新的消息（会设置之前消息的ID），会重新添加到
+     *      CommitLog中，消息主题的设置有两种情况：
+     *      a. 达到了加入DLQ队列的条件，此时主题为DLQ主题（%DLQ% + 消费组名称），消息之后会添加到选取的DLQ队列中
+     *      b. 未达到DLQ队列的条件，此时主题为重试主题（%RETRY% + 消费组名称），之后重新进行消费
+     *  6. 调用asyncPutMessage添加消息，详细过程可参考之前的文章【消息的存储】
      * @param ctx
      * @param request
      * @return
@@ -104,6 +118,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         final SendMessageContext mqtraceContext;
         switch (request.getCode()) {
             case RequestCode.CONSUMER_SEND_MSG_BACK:
+                // 处理请求
                 return this.asyncConsumerSendMsgBack(ctx, request);
             default:
                 // 解析请求头
@@ -139,8 +154,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             ConsumeMessageContext context = buildConsumeMessageContext(namespace, requestHeader, request);
             this.executeConsumeMessageHookAfter(context);
         }
+        // 根据消费组获取订阅信息配置
         SubscriptionGroupConfig subscriptionGroupConfig =
             this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(requestHeader.getGroup());
+        // 如果为空，直接返回
         if (null == subscriptionGroupConfig) {
             response.setCode(ResponseCode.SUBSCRIPTION_GROUP_NOT_EXIST);
             response.setRemark("subscription group not exist, " + requestHeader.getGroup() + " "
@@ -159,13 +176,16 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             return CompletableFuture.completedFuture(response);
         }
 
+        // 获取消费组的重试主题
         String newTopic = MixAll.getRetryTopic(requestHeader.getGroup());
+        // 从重试队列中随机选取一个队列
         int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % subscriptionGroupConfig.getRetryQueueNums();
         int topicSysFlag = 0;
         if (requestHeader.isUnitMode()) {
             topicSysFlag = TopicSysFlag.buildSysFlag(false, true);
         }
 
+        // 创建TopicConfig主题配置信息
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(
             newTopic,
             subscriptionGroupConfig.getRetryQueueNums(),
@@ -181,6 +201,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             response.setRemark(String.format("the topic[%s] sending message is forbidden", newTopic));
             return CompletableFuture.completedFuture(response);
         }
+        // 根据消息物理偏移量从commitLog文件中获取消息
         MessageExt msgExt = this.brokerController.getMessageStore().lookMessageByOffset(requestHeader.getOffset());
         if (null == msgExt) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -188,24 +209,31 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             return CompletableFuture.completedFuture(response);
         }
 
+        // 获取消息的重试主题
         final String retryTopic = msgExt.getProperty(MessageConst.PROPERTY_RETRY_TOPIC);
         if (null == retryTopic) {
             MessageAccessor.putProperty(msgExt, MessageConst.PROPERTY_RETRY_TOPIC, msgExt.getTopic());
         }
         msgExt.setWaitStoreMsgOK(false);
 
+        // 延迟等级获取
         int delayLevel = requestHeader.getDelayLevel();
 
+        // 获取最大消费重试次数
         int maxReconsumeTimes = subscriptionGroupConfig.getRetryMaxTimes();
         if (request.getVersion() >= MQVersion.Version.V3_4_9.ordinal()) {
             maxReconsumeTimes = requestHeader.getMaxReconsumeTimes();
         }
 
+        // 判断消息的消费次数是否大于等于最大消费次数 或者 延迟等级小于0
         if (msgExt.getReconsumeTimes() >= maxReconsumeTimes 
             || delayLevel < 0) {
+            // 获取DLQ主题
             newTopic = MixAll.getDLQTopic(requestHeader.getGroup());
+            // 选取一个队列
             queueIdInt = Math.abs(this.random.nextInt() % 99999999) % DLQ_NUMS_PER_GROUP;
 
+            // 创建DLQ的topicConfig
             topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(newTopic,
                     DLQ_NUMS_PER_GROUP,
                     PermName.PERM_WRITE, 0);
@@ -215,29 +243,41 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 return CompletableFuture.completedFuture(response);
             }
         } else {
+            // 如果延迟级别为0
             if (0 == delayLevel) {
+                // 更新延迟级别
                 delayLevel = 3 + msgExt.getReconsumeTimes();
             }
+            // 设置延迟级别
             msgExt.setDelayTimeLevel(delayLevel);
         }
 
+        // 新建消息
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
+        // 设置主题
         msgInner.setTopic(newTopic);
+        // 设置消息
         msgInner.setBody(msgExt.getBody());
         msgInner.setFlag(msgExt.getFlag());
+        // 设置消息属性
         MessageAccessor.setProperties(msgInner, msgExt.getProperties());
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgExt.getProperties()));
         msgInner.setTagsCode(MessageExtBrokerInner.tagsString2tagsCode(null, msgExt.getTags()));
 
+        // 设置队列ID
         msgInner.setQueueId(queueIdInt);
         msgInner.setSysFlag(msgExt.getSysFlag());
         msgInner.setBornTimestamp(msgExt.getBornTimestamp());
         msgInner.setBornHost(msgExt.getBornHost());
         msgInner.setStoreHost(msgExt.getStoreHost());
+        // 设置消费次数
         msgInner.setReconsumeTimes(msgExt.getReconsumeTimes() + 1);
 
+        // 原始的消息ID
         String originMsgId = MessageAccessor.getOriginMessageId(msgExt);
+        // 设置消息ID
         MessageAccessor.setOriginMessageId(msgInner, UtilAll.isBlank(originMsgId) ? msgExt.getMsgId() : originMsgId);
+        // TODO 添加重试消息, 进行存储
         CompletableFuture<PutMessageResult> putMessageResult = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
         return putMessageResult.thenApply((r) -> {
             if (r != null) {

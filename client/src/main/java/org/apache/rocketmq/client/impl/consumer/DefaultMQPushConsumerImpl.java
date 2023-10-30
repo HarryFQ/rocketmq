@@ -600,11 +600,24 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         log.info("resume this consumer, {}", this.defaultMQPushConsumer.getConsumerGroup());
     }
 
+    /**
+     *
+     * DefaultMQPushConsumerImp的sendMessageBack方法中又调用了MQClientAPIImpl的consumerSendMessageBack方法进行发送
+     * @param msg
+     * @param delayLevel
+     * @param brokerName
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     * @throws MQClientException
+     */
     public void sendMessageBack(MessageExt msg, int delayLevel, final String brokerName)
         throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
         try {
+            // 获取Broker地址
             String brokerAddr = (null != brokerName) ? this.mQClientFactory.findBrokerAddressInPublish(brokerName)
                 : RemotingHelper.parseSocketAddressAddr(msg.getStoreHost());
+            // 调用consumerSendMessageBack方法发送消息
             this.mQClientFactory.getMQClientAPIImpl().consumerSendMessageBack(brokerAddr, msg,
                 this.defaultMQPushConsumer.getConsumerGroup(), delayLevel, 5000, getMaxReconsumeTimes());
         } catch (Exception e) {
@@ -1169,6 +1182,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * DefaultMQPushConsumerImpl是MQConsumerInner的一个子类，以它为例可以看到在persistConsumerOffset方法中调用了offsetStore的persistAll方法进行持久化.
+     */
     @Override
     public void persistConsumerOffset() {
         try {
@@ -1177,6 +1193,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             Set<MessageQueue> allocateMq = this.rebalanceImpl.getProcessQueueTable().keySet();
             mqs.addAll(allocateMq);
 
+            // 拉取进度持久化
             this.offsetStore.persistAll(mqs);
         } catch (Exception e) {
             log.error("group: " + this.defaultMQPushConsumer.getConsumerGroup() + " persistConsumerOffset exception", e);
@@ -1305,11 +1322,21 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         return queueTimeSpan;
     }
 
+    /**
+     *
+     * {@link ConsumeMessageConcurrentlyService.ConsumeRequest#run()} 里面调用
+     * @param msgs
+     * @param consumerGroup
+     */
     public void resetRetryAndNamespace(final List<MessageExt> msgs, String consumerGroup) {
+        // 获取消费组的重试主题：%RETRY% + 消费组名称
         final String groupTopic = MixAll.getRetryTopic(consumerGroup);
         for (MessageExt msg : msgs) {
+            // 获取消息的重试主题名称
             String retryTopic = msg.getProperty(MessageConst.PROPERTY_RETRY_TOPIC);
+            // 如果重试主题不为空并且与消费组的重试主题一致
             if (retryTopic != null && groupTopic.equals(msg.getTopic())) {
+                // 设置重试主题
                 msg.setTopic(retryTopic);
             }
 

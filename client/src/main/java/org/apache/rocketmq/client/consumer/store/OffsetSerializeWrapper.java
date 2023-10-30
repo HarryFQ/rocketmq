@@ -24,6 +24,8 @@ import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
 
 /**
  * Wrapper class for offset serialization
+ * OffsetSerializeWrapper中同样使用了ConcurrentMap，从磁盘的offsets.json文件中读取数据后，将JSON转为OffsetSerializeWrapper对象
+ * ，就可以通过OffsetSerializeWrapper的offsetTable获取到之前保存的每个消息队列的消费进度，然后加入到LocalFileOffsetStore的offsetTable中
  */
 public class OffsetSerializeWrapper extends RemotingSerializable {
     private ConcurrentMap<MessageQueue, AtomicLong> offsetTable =

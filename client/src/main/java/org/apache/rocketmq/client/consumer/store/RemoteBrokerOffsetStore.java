@@ -37,7 +37,9 @@ import org.apache.rocketmq.common.protocol.header.UpdateConsumerOffsetRequestHea
 import org.apache.rocketmq.remoting.exception.RemotingException;
 
 /**
- * Remote storage implementation
+ * Remote storage implementation 对应集群模式
+ *
+ * RocketMQ消费模式分为广播模式和集群模式，广播模式下消费进度保存在每个消费者端，集群模式下消费进度保存在Broker端。
  */
 public class RemoteBrokerOffsetStore implements OffsetStore {
     private final static InternalLogger log = ClientLogger.getLog();
@@ -51,15 +53,26 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
         this.groupName = groupName;
     }
 
+    /**
+     * 集群模式下加载消费进度需要从Broker获取，在消费者发送消息拉取请求的时候，Broker会计算消费偏移量，所以RemoteBrokerOffsetStore的load方法为空，什么也没有干
+     */
     @Override
     public void load() {
     }
 
+    /**
+     * 集群模式下的更新进度与广播模式下的更新类型，都是只更新了offsetTable中的数据
+     * @param mq
+     * @param offset
+     * @param increaseOnly
+     */
     @Override
     public void updateOffset(MessageQueue mq, long offset, boolean increaseOnly) {
         if (mq != null) {
+            // 获取消息队列的进度
             AtomicLong offsetOld = this.offsetTable.get(mq);
             if (null == offsetOld) {
+                // 将消费进度保存在offsetTable中
                 offsetOld = this.offsetTable.putIfAbsent(mq, new AtomicLong(offset));
             }
 
@@ -67,6 +80,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
                 if (increaseOnly) {
                     MixAll.compareAndIncreaseOnly(offsetOld, offset);
                 } else {
+                    // 更新拉取偏移量
                     offsetOld.set(offset);
                 }
             }
@@ -111,6 +125,14 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
         return -1;
     }
 
+    /**
+     * 1. 由于集群模式下消费进度保存在Broker端，所以persistAll方法中调用了updateConsumeOffsetToBroker向Broker发送请求进行消费进度保存:
+     *
+     * 2. MQClientInstance在启动定时任务的方法startScheduledTask中注册了定时任务，定时调用persistAllConsumerOffset对拉取进度进行持久化
+     * ，persistAllConsumerOffset中又调用了MQConsumerInner的persistConsumerOffset方法
+     *
+     * @param mqs
+     */
     @Override
     public void persistAll(Set<MessageQueue> mqs) {
         if (null == mqs || mqs.isEmpty())
@@ -124,6 +146,7 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
             if (offset != null) {
                 if (mqs.contains(mq)) {
                     try {
+                        // 向Broker发送请求更新拉取偏移量
                         this.updateConsumeOffsetToBroker(mq, offset.get());
                         log.info("[persistAll] Group: {} ClientId: {} updateConsumeOffsetToBroker {} {}",
                             this.groupName,

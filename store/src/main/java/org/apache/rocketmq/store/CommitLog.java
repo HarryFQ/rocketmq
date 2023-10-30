@@ -832,6 +832,16 @@ public class CommitLog {
 
     /**
      * 同步写入消息
+     *
+     * 1. 首先获取了事务类型，如果未使用事务或者是提交事务的情况下，对延迟时间级别进行判断，如果延迟时间级别大于0，说明消息需要延迟消费，此时做如下处理：
+     *  a. 判断消息的延迟级别是否超过了最大延迟级别，如果超过了就使用最大延迟级别
+     *  b. 获取RMQ_SYS_SCHEDULE_TOPIC，它是在TopicValidator中定义的常量，值为SCHEDULE_TOPIC_XXXX:
+     *  c. 根据延迟级别选取对应的队列，一般会把相同延迟级别的消息放在同一个队列中
+     *  d. 备份之前的TOPIC和队列ID
+     *  e. 更改消息队列的主题为RMQ_SYS_SCHEDULE_TOPIC，所以延迟消息的主题最终被设置为RMQ_SYS_SCHEDULE_TOPIC，放在对应的延迟队列中进行处理
+     * {@link org.apache.rocketmq.store.schedule.ScheduleMessageService#start()} 中为不同的延迟级别创建了对应的定时任务来处理延迟消息.
+     *
+     *
      * @param msg
      * @return
      */
@@ -854,22 +864,29 @@ public class CommitLog {
 
         // 获取事务类型
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
+        // 如果未使用事务或者提交事务
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            // 判断延迟级别
             if (msg.getDelayTimeLevel() > 0) {
+                // 如果超过了最大延迟级别
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
 
+                // 获取RMQ_SYS_SCHEDULE_TOPIC
                 topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;
+                // 根据延迟级别选取对应的队列
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
 
                 // Backup real topic, queueId
+                // 备份之前的TOPIC和队列ID
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
                 msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
 
+                // 设置SCHEDULE_TOPIC
                 msg.setTopic(topic);
                 msg.setQueueId(queueId);
             }
