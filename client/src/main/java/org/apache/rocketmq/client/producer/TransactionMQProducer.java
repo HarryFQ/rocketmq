@@ -79,14 +79,22 @@ public class TransactionMQProducer extends DefaultMQProducer {
         return this.defaultMQProducerImpl.sendMessageInTransaction(msg, tranExecuter, arg);
     }
 
+    /**
+     * Todo 生产者发送事物消息的入口
+     * @param msg Transactional message to send.
+     * @param arg Argument used along with local transaction executor.
+     * @return
+     * @throws MQClientException
+     */
     @Override
     public TransactionSendResult sendMessageInTransaction(final Message msg,
         final Object arg) throws MQClientException {
         if (null == this.transactionListener) {
             throw new MQClientException("TransactionListener is null", null);
         }
-
+        // 设置主题
         msg.setTopic(NamespaceUtil.wrapNamespace(this.getNamespace(), msg.getTopic()));
+        // 发送事务消息
         return this.defaultMQProducerImpl.sendMessageInTransaction(msg, null, arg);
     }
 

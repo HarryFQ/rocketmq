@@ -58,30 +58,48 @@ public abstract class AbstractTransactionalMessageCheckListener {
         this.brokerController = brokerController;
     }
 
+    /**
+     * sendCheckMessage方法在AbstractTransactionalMessageCheckListener中实现，主要是构建请求信息，然后向消息的生产者发送事务状态回查的请求
+     *
+     * @param msgExt
+     * @throws Exception
+     */
     public void sendCheckMessage(MessageExt msgExt) throws Exception {
+        // 构建回查请求头
         CheckTransactionStateRequestHeader checkTransactionStateRequestHeader = new CheckTransactionStateRequestHeader();
+        // 设置Commitlog偏移量
         checkTransactionStateRequestHeader.setCommitLogOffset(msgExt.getCommitLogOffset());
         checkTransactionStateRequestHeader.setOffsetMsgId(msgExt.getMsgId());
         checkTransactionStateRequestHeader.setMsgId(msgExt.getUserProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX));
         checkTransactionStateRequestHeader.setTransactionId(checkTransactionStateRequestHeader.getMsgId());
         checkTransactionStateRequestHeader.setTranStateTableOffset(msgExt.getQueueOffset());
+        // 设置消息实际的TOPIC
         msgExt.setTopic(msgExt.getUserProperty(MessageConst.PROPERTY_REAL_TOPIC));
+        // 设置消息实际的队列ID
         msgExt.setQueueId(Integer.parseInt(msgExt.getUserProperty(MessageConst.PROPERTY_REAL_QUEUE_ID)));
         msgExt.setStoreSize(0);
         String groupId = msgExt.getProperty(MessageConst.PROPERTY_PRODUCER_GROUP);
+        // 获取channel
         Channel channel = brokerController.getProducerManager().getAvailableChannel(groupId);
         if (channel != null) {
+            // 发送回查请求  事务状态回查请求的处理在{@see org.apache.rocketmq.client.impl.ClientRemotingProcessor.processRequest}中
+            // ，如果请求类型是CHECK_TRANSACTION_STATE表示是事务状态回查请求，调用checkTransactionState方法进行事务状态检查
             brokerController.getBroker2Client().checkProducerTransactionState(groupId, channel, checkTransactionStateRequestHeader, msgExt);
         } else {
             LOGGER.warn("Check transaction failed, channel is null. groupId={}", groupId);
         }
     }
 
+    /**
+     * 向客户端发送事务状态回查的请求，可以看到是通过线程池异步实现的
+     * @param msgExt
+     */
     public void resolveHalfMsg(final MessageExt msgExt) {
         executorService.execute(new Runnable() {
             @Override
             public void run() {
                 try {
+                    // 发送状态回查请求
                     sendCheckMessage(msgExt);
                 } catch (Exception e) {
                     LOGGER.error("Send check message error!", e);

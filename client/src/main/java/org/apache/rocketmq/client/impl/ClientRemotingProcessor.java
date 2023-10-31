@@ -64,11 +64,19 @@ public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implemen
         this.mqClientFactory = mqClientFactory;
     }
 
+    /**
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         switch (request.getCode()) {
+
             case RequestCode.CHECK_TRANSACTION_STATE:
+                //事务状态回查请求的处理在ClientRemotingProcessor中，如果请求类型是CHECK_TRANSACTION_STATE表示是事务状态回查请求
                 return this.checkTransactionState(ctx, request);
             case RequestCode.NOTIFY_CONSUMER_IDS_CHANGED:
                 return this.notifyConsumerIdsChanged(ctx, request);
@@ -96,26 +104,43 @@ public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implemen
         return false;
     }
 
+    /**
+     * 1. 事务状态回查请求的处理在ClientRemotingProcessor中，如果请求类型是CHECK_TRANSACTION_STATE表示是事务状态回查请求
+     * ，调用checkTransactionState方法进行事务状态检查：
+     *  1. 从请求中获取消息，判断消息是否为空，不为空进入下一步
+     *  2. 从消息属性中获取生产者组名称，如果不为空进入下一步
+     *  3. 根据生产者组名称获取MQProducerInner对象，然后调用checkTransactionState进行状态检查
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand checkTransactionState(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         final CheckTransactionStateRequestHeader requestHeader =
             (CheckTransactionStateRequestHeader) request.decodeCommandCustomHeader(CheckTransactionStateRequestHeader.class);
         final ByteBuffer byteBuffer = ByteBuffer.wrap(request.getBody());
+        // 获取消息
         final MessageExt messageExt = MessageDecoder.decode(byteBuffer);
+        // 如果消息不为空
         if (messageExt != null) {
             if (StringUtils.isNotEmpty(this.mqClientFactory.getClientConfig().getNamespace())) {
                 messageExt.setTopic(NamespaceUtil
                     .withoutNamespace(messageExt.getTopic(), this.mqClientFactory.getClientConfig().getNamespace()));
             }
+            // 获取事务ID
             String transactionId = messageExt.getProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX);
             if (null != transactionId && !"".equals(transactionId)) {
                 messageExt.setTransactionId(transactionId);
             }
+            // 获取生产者组
             final String group = messageExt.getProperty(MessageConst.PROPERTY_PRODUCER_GROUP);
             if (group != null) {
+                // 获取MQProducerInner
                 MQProducerInner producer = this.mqClientFactory.selectProducer(group);
                 if (producer != null) {
                     final String addr = RemotingHelper.parseChannelRemoteAddr(ctx.channel());
+                    // 调用checkTransactionState进行状态检查
                     producer.checkTransactionState(addr, messageExt, requestHeader);
                 } else {
                     log.debug("checkTransactionState, pick producer by group[{}] failed", group);

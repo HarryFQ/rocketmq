@@ -22,6 +22,13 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
+/**
+ * 由于各种原因有可能未成功收到提交/回滚事务的请求，所以RocketMQ需要定期检查half消息，检查事务的执行结果，TransactionalMessageCheckService用于half消息状态的检查
+ * ，它实现了ServiceThread，默认可以看到在onWaitEnd方法中调用了check方法进行状态检查.
+ *
+ *
+ *
+ */
 public class TransactionalMessageCheckService extends ServiceThread {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);
 
@@ -47,6 +54,9 @@ public class TransactionalMessageCheckService extends ServiceThread {
         log.info("End transaction check service thread!");
     }
 
+    /**
+     * 事物消息的状态检查
+     */
     @Override
     protected void onWaitEnd() {
         long timeout = brokerController.getBrokerConfig().getTransactionTimeOut();
@@ -54,6 +64,7 @@ public class TransactionalMessageCheckService extends ServiceThread {
         long begin = System.currentTimeMillis();
         log.info("Begin to check prepare message, begin time:{}", begin);
         // 由于各种原因有可能未成功收到提交/回滚事务的请求，所以RocketMQ需要定期检查half消息，检查事务的执行结果
+        // 实现： {@see org.apache.rocketmq.broker.transaction.queue.TransactionalMessageServiceImpl.check}
         this.brokerController.getTransactionalMessageService().check(timeout, checkMax, this.brokerController.getTransactionalMessageCheckListener());
         log.info("End to check prepare message, consumed time:{}", System.currentTimeMillis() - begin);
     }

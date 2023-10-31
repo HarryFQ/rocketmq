@@ -43,6 +43,7 @@ public interface TransactionalMessageService {
     /**
      * Delete prepare message when this message has been committed or rolled back.
      * 在消息 提交或者回滚时删除half消息
+     * 由于CommitLog追加写的性质，RocketMQ并不会直接将half消息从CommitLog中删除，而是使用了另外一个OP主题RMQ_SYS_TRANS_OP_HALF_TOPIC（以下简称OP主题/队列），将已经提交/回滚的消息记录在OP主题队列中
      * @param messageExt
      */
     boolean deletePrepareMessage(MessageExt messageExt);

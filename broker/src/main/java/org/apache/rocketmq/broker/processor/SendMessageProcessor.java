@@ -308,10 +308,15 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
     /**
      * 单个消息发送处理
+     *
+     * 当Broker收到消息后，判断消息是否含有PROPERTY_TRANSACTION_PREPARED属性，如果含有prepared属性，会获取
+     * TransactionalMessageService，然后调用asyncPrepareMessage对消息进行处理.
+     *
      * 存储消息流程：
      * 1. 创建MessageExtBrokerInner对象，对消息的相关内容进行封装，将主题信息、队列ID、消息内容、消息属性、发送消息时间、发送消息的主机地址等信息设置到MessageExtBrokerInner中
      * 2. 判断是否使用了事务，如果未使用事务调用brokerController的getMessageStore方法获取MessageStore对象，然后调用asyncPutMessage方法对消息进行持久化存储
-     * 3. 返回消息的存储结果
+     * 3. 返回消息的存储结果<pr/>
+     *
      * @param ctx
      * @param request
      * @param mqtraceContext
@@ -371,7 +376,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         CompletableFuture<PutMessageResult> putMessageResult = null;
         Map<String, String> origProps = MessageDecoder.string2messageProperties(requestHeader.getProperties());
         // 获取事物消息的标志，{@see org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl.sendMessageInTransaction}
+        // 获取prepared属性标记
         String transFlag = origProps.get(MessageConst.PROPERTY_TRANSACTION_PREPARED);
+        // 如果事务标记不为空
         if (transFlag != null && Boolean.parseBoolean(transFlag)) {
             if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {
                 response.setCode(ResponseCode.NO_PERMISSION);
@@ -381,6 +388,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 return CompletableFuture.completedFuture(response);
             }
             // 事务处理
+            // 事务消息持久化
             putMessageResult = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
         } else {
             // MessageStore是一个接口，在BrokerController的初始化方法中可以看到，具体使用的是DefaultMessageStore

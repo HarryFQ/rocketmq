@@ -26,10 +26,12 @@ public class TransactionalMessageUtil {
     public static Charset charset = Charset.forName("utf-8");
 
     public static String buildOpTopic() {
+        // OP队列
         return TopicValidator.RMQ_SYS_TRANS_OP_HALF_TOPIC;
     }
 
     public static String buildHalfTopic() {
+        // half消息主题
         return TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC;
     }
 

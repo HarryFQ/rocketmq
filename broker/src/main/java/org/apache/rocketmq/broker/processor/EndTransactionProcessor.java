@@ -52,7 +52,11 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
 
     /**
      * {@link org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl#endTransaction} 处理这个请求
-     *
+     *Broker对事务结束的请求处理在EndTransactionProcessor中：
+     *  1. 判断是否是从节点，从节点没有结束事务的权限，如果是从节点返回SLAVE_NOT_AVAILABLE
+     *  2. 从请求头中获取事务的提交类型：
+     *      a. TRANSACTION_COMMIT_TYPE：表示提交事务，会调用commitMessage方法提交消息，如果提交成功调用endMessageTransaction结束事务，恢复消息的原始主题和队列并调用deletePrepareMessage方法删掉half消息
+     *      b. TRANSACTION_ROLLBACK_TYPE：表示回滚事务，会调用rollbackMessage方法回滚事务，然后删掉half消息
      * @param ctx
      * @param request
      * @return
@@ -61,10 +65,12 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws
         RemotingCommandException {
+        // 创建响应
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
         final EndTransactionRequestHeader requestHeader =
             (EndTransactionRequestHeader)request.decodeCommandCustomHeader(EndTransactionRequestHeader.class);
         LOGGER.debug("Transaction request:{}", requestHeader);
+        // 如果是从节点，从节点没有结束事务的权限，返回SLAVE_NOT_AVAILABLE
         if (BrokerRole.SLAVE == brokerController.getMessageStoreConfig().getBrokerRole()) {
             response.setCode(ResponseCode.SLAVE_NOT_AVAILABLE);
             LOGGER.warn("Message store is slave mode, so end transaction is forbidden. ");
@@ -131,13 +137,15 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
             }
         }
         OperationResult result = new OperationResult();
-        // 如果是事物提交了
+        // 判断事务提交类型，如果是提交事务 , 如果是事物提交了
         if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {
-            // 根据消息的偏移量从commitLog中获取消息
+            //提交消息 根据消息的偏移量从commitLog中获取消息
             result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
+                // 校验Prepare消息
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
                 if (res.getCode() == ResponseCode.SUCCESS) {
+                    // 结束事务，恢复消息的原始主题和队列
                     MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());
                     msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));
                     msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());
@@ -149,19 +157,22 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                     RemotingCommand sendResult = sendFinalMessage(msgInner);
                     // 如果存储(store)层返回success
                     if (sendResult.getCode() == ResponseCode.SUCCESS) {
-                        // 不会直接删除消息
+                        //删除half消息, 不会直接删除消息
+                        // 由于CommitLog追加写的性质，RocketMQ并不会直接将half消息从CommitLog中删除，而是使用了另外一个
+                        // OP主题RMQ_SYS_TRANS_OP_HALF_TOPIC（以下简称OP主题/队列），将已经提交/回滚的消息记录在OP主题队列中
                         this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                     }
                     return sendResult;
                 }
                 return res;
             }
-        } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) { // 回滚的话
-            // 根据消息的偏移量从commitLog中获取消息
+        } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {  // 如果是回滚
+            // 回滚消息 根据消息的偏移量从commitLog中获取消息
             result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
                 if (res.getCode() == ResponseCode.SUCCESS) {
+                    // 删除half消息,其实就是添加到Op 消息队列中
                     this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                 }
                 return res;

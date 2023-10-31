@@ -72,6 +72,12 @@ public class TransactionalMessageBridge {
 
     }
 
+    /**
+     * 根据messageQueue的 topic, queueId获取消费进度
+     *
+     * @param mq
+     * @return
+     */
     public long fetchConsumeOffset(MessageQueue mq) {
         long offset = brokerController.getConsumerOffsetManager().queryOffset(TransactionalMessageUtil.buildConsumerGroup(),
             mq.getTopic(), mq.getQueueId());
@@ -196,7 +202,14 @@ public class TransactionalMessageBridge {
         return store.putMessage(parseHalfMessageInner(messageInner));
     }
 
+    /**
+     * asyncPutHalfMessage方法中，调用了parseHalfMessageInner方法设置half消息的相关属性。
+     *
+     * @param messageInner
+     * @return
+     */
     public CompletableFuture<PutMessageResult> asyncPutHalfMessage(MessageExtBrokerInner messageInner) {
+        // 添加消息
         return store.asyncPutMessage(parseHalfMessageInner(messageInner));
     }
 
@@ -205,29 +218,53 @@ public class TransactionalMessageBridge {
      * 设置消息实际的主题和队列ID，待收到事务提交请求后恢复实际的主题和队列ID，向实际的队列中添加消息
      * 更改消息的主题为half消息主题RMQ_SYS_TRANS_HALF_TOPIC，先将消息投送到half消息队列中
      * half主题对应的消息队列ID为0，所以更改消息的队列ID为0
+     *
+     *1. 因为是half消息，此时还不能直接加入到实际的消息队列中，否则一旦加入就会被消费者消费，所以需要先对half消息暂存，等收到消息提交请
+     * 求时才可以添加到实际的消息队列中，RocketMQ设置了一个RMQ_SYS_TRANS_HALF_TOPIC主题来暂存half消息。
+     *
+     *2. 在parseHalfMessageInner方法中，会对消息进行如下处理：
+     *  1. 设置消息实际的主题和队列ID，待收到事务提交请求后恢复实际的主题和队列ID，向实际的队列中添加消息
+     *  2. 更改消息的主题为half消息主题RMQ_SYS_TRANS_HALF_TOPIC，先将消息投送到half消息队列中
+     *  3. half主题对应的消息队列ID为0，所以更改消息的队列ID为0
+     * 之后调用asyncPutMessage添加消息，接下来的流程就和普通消息的添加一致了，具体可参考【RocketMQ】消息的存储
+     *
      * @param msgInner
      * @return
      */
     private MessageExtBrokerInner parseHalfMessageInner(MessageExtBrokerInner msgInner) {
+        // 设置实际的主题
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_REAL_TOPIC, msgInner.getTopic());
+        // 设置实际的队列ID
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_REAL_QUEUE_ID,
             String.valueOf(msgInner.getQueueId()));
         msgInner.setSysFlag(
             MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), MessageSysFlag.TRANSACTION_NOT_TYPE));
         // 事物消息的内部topic
+        // 设置事务主题RMQ_SYS_TRANS_HALF_TOPIC
         msgInner.setTopic(TransactionalMessageUtil.buildHalfTopic());
+        // 设置事务队列ID
         msgInner.setQueueId(0);
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));
         return msgInner;
     }
 
+    /**
+     * 1. putOpMessage方法在TransactionalMessageBridge中实现，它又调用了addRemoveTagInTransactionOp方法向OP队列中添加消息：
+     *  1. 构建OP消息，主要是创建Message对象，然后设置主题为RMQ_SYS_TRANS_OP_HALF_TOPIC，设置half消息在队列的偏移量
+     *  2. 调用 writeOp方法将消息写入OP队列，makeOpMessageInner方法用于构建消息体，然后调用putMessage放将消息写入CommitLog
+     * @param messageExt
+     * @param opType
+     * @return
+     */
     public boolean putOpMessage(MessageExt messageExt, String opType) {
+        // 构建消息队列，设置消息所属主题、Broker名称、队列ID信息
         MessageQueue messageQueue = new MessageQueue(messageExt.getTopic(),
             this.brokerController.getBrokerConfig().getBrokerName(), messageExt.getQueueId());
         // 如果是删除则 将topic，queueId 添加到RMQ_SYS_TRANS_OP_HALF_TOPIC 对列中
         // 由于CommitLog追加写的性质，RocketMQ并不会直接将half消息从CommitLog中删除，
         // 而是使用了另外一个OP主题RMQ_SYS_TRANS_OP_HALF_TOPIC（以下简称OP主题/队列），将已经提交/回滚的消息记录在OP主题队列中
         if (TransactionalMessageUtil.REMOVETAG.equals(opType)) {
+            // 添加OP消息
             return addRemoveTagInTransactionOp(messageExt, messageQueue);
         }
         return true;
@@ -314,20 +351,25 @@ public class TransactionalMessageBridge {
     /**
      * Use this function while transaction msg is committed or rollback write a flag 'd' to operation queue for the
      * msg's offset
+     * 当事务消息进行提交或者回滚时，记录在operation队列中（OP队列）
+     *
      *
      * @param messageExt Op message
      * @param messageQueue Op message queue
      * @return This method will always return true.
      */
     private boolean addRemoveTagInTransactionOp(MessageExt messageExt, MessageQueue messageQueue) {
+        // 构建OP消息，主题为RMQ_SYS_TRANS_OP_HALF_TOPIC
         Message message = new Message(TransactionalMessageUtil.buildOpTopic(), TransactionalMessageUtil.REMOVETAG,
             String.valueOf(messageExt.getQueueOffset()).getBytes(TransactionalMessageUtil.charset));
+        // 将消息写入OP队列
         writeOp(message, messageQueue);
         return true;
     }
 
     private void writeOp(Message message, MessageQueue mq) {
         MessageQueue opQueue;
+        // 如果已经添加过
         if (opQueueMap.containsKey(mq)) {
             opQueue = opQueueMap.get(mq);
         } else {
@@ -337,9 +379,12 @@ public class TransactionalMessageBridge {
                 opQueue = oldQueue;
             }
         }
+        // 如果为空
         if (opQueue == null) {
+            // 创建
             opQueue = new MessageQueue(TransactionalMessageUtil.buildOpTopic(), mq.getBrokerName(), mq.getQueueId());
         }
+        // 构建OP消息添加到OP队列中
         putMessage(makeOpMessageInner(message, opQueue));
     }
 

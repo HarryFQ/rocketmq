@@ -1183,7 +1183,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     }
 
     /**
-     * DefaultMQPushConsumerImpl是MQConsumerInner的一个子类，以它为例可以看到在persistConsumerOffset方法中调用了offsetStore的persistAll方法进行持久化.
+     * DefaultMQPushConsumerImpl是MQConsumerInner的一个子类，以它为例可以看到在persistConsumerOffset方法中调用了offsetStore的persistAll方法进行持久化
      */
     @Override
     public void persistConsumerOffset() {
