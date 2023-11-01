@@ -52,6 +52,16 @@ public class ProcessQueue {
     private final TreeMap<Long, MessageExt> msgTreeMap = new TreeMap<Long, MessageExt>();
     private final AtomicLong msgCount = new AtomicLong();
     private final AtomicLong msgSize = new AtomicLong();
+    /**
+     * 消息消费锁
+     * 1. ProcessQueue中持有一个消息消费锁，消费者调用consumeMessage进行消息前，会添加消费锁，上面已经知道在处理拉取到的消息时就已经调用
+     *    messageQueueLock的fetchLockObject方法获取消息队列的对象锁然后使用syncronized对其加锁，那么为什么在消费之前还要再加一个消费锁呢？
+     *      a. 查看调用地方，removeUnnecessaryMessageQueue方法从名字上可以看出，是移除不需要的消息队列，RebalancePushImpl是与负载均衡相关的类
+     *       ，所以猜测有可能在负载均衡时，需要移除某个消息队列，那么消费者在进行消费的时候就要获取ProcessQueue的consumeLock进行加锁，防止正在消费的过程中，消费队列被移除。
+     *    不过在消费者在消费消息前已经对队列进行了加锁，负载均衡的时候为什么不使用队列锁而要使用消费锁？
+     *      b. 这里应该是为了减小锁的粒度，因为消费者在对消息队列加锁后，还进行了一系列的判断，校验都成功之后从处理队列中获取消息内容，之后才开始消费消息
+     *       ，如果负载均衡使用消息队列锁就要等待整个过程完成才有可能加锁成功，这样显然会降低性能，而如果使用消息消费锁，就可以减少等待的时间，并且消费者在进行消息消费前也会判断ProcessQueue是否被移除，所以只要保证consumeMessage方法在执行的过程中，ProcessQueue不被移除即可。
+     */
     private final Lock lockConsume = new ReentrantLock();
     /**
      * A subset of msgTreeMap, will only be used when orderly consume

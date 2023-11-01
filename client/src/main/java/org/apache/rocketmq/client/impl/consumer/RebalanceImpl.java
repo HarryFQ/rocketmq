@@ -135,19 +135,30 @@ public abstract class RebalanceImpl {
         return result;
     }
 
+    /**
+     * 1. 如果加锁成功构建拉取请求进行消息拉取，如果加锁失败，则跳过继续处理下一个消息队列
+     *
+     * @param mq
+     * @return
+     */
     public boolean lock(final MessageQueue mq) {
+        // 获取broker信息
         FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(), MixAll.MASTER_ID, true);
         if (findBrokerResult != null) {
+            // 构建加锁请求
             LockBatchRequestBody requestBody = new LockBatchRequestBody();
             requestBody.setConsumerGroup(this.consumerGroup);
             requestBody.setClientId(this.mQClientFactory.getClientId());
+            // 设置要加锁的消息队列
             requestBody.getMqSet().add(mq);
 
             try {
+                // 发送加锁请求
                 Set<MessageQueue> lockedMq =
                     this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
                 for (MessageQueue mmqq : lockedMq) {
                     ProcessQueue processQueue = this.processQueueTable.get(mmqq);
+                    // 如果加锁成功设置成功标记
                     if (processQueue != null) {
                         processQueue.setLocked(true);
                         processQueue.setLastLockTimestamp(System.currentTimeMillis());
@@ -168,44 +179,72 @@ public abstract class RebalanceImpl {
         return false;
     }
 
+    /**
+     * 消息队列加锁
+     *  1. 在RebalanceImpl的lockAll方法中，首先从处理队列表中获取当前消费者订阅的所有消息队列MessageQueue信息，返回数据是一个MAP，key为broker名称，value为broker下的消息队列，接着对MAP进行遍历，处理每一个broker下的消息队列：
+     *      a. 获取broker名称，根据broker名称查找broker的相关信息；
+     *      b. 构建加锁请求，在请求中设置要加锁的消息队列，然后将请求发送给broker，表示要对这些消息队列进行加锁；
+     *      c. 加锁请求返回的响应结果中包含了加锁成功的消息队列，此时遍历加锁成功的消息队列，将消息队列对应的ProcessQueue中的locked属性置为true表示该消息队列已加锁成功；
+     *      d. 处理加锁失败的消息队列，如果响应中未包含某个消息队列的信息，表示此消息队列加锁失败，需要将其对应的ProcessQueue对象中的locked属性置为false表示加锁失败；
+     *
+     *  2. 在【RocketMQ】消息的拉取一文中讲到，消费者需要先向Broker发送拉取消息请求，从Broker中拉取消息，拉取消息请求构建在RebalanceImpl
+     *     的updateProcessQueueTableInRebalance方法中，拉取消息的响应结果处理在PullCallback的onSuccess方法中，接下来看下顺序消费时在这两个过程中是如何处理的.
+     *
+     */
     public void lockAll() {
+        // 从处理队列表中获取broker对应的消息队列，key为broker名称，value为broker下的消息队列
         HashMap<String, Set<MessageQueue>> brokerMqs = this.buildProcessQueueTableByBrokerName();
 
+        // 遍历订阅的消息队列
         Iterator<Entry<String, Set<MessageQueue>>> it = brokerMqs.entrySet().iterator();
         while (it.hasNext()) {
             Entry<String, Set<MessageQueue>> entry = it.next();
+            // broker名称
             final String brokerName = entry.getKey();
+            // 获取消息队列
             final Set<MessageQueue> mqs = entry.getValue();
 
             if (mqs.isEmpty())
                 continue;
 
+            // 根据broker名称获取broker信息
             FindBrokerResult findBrokerResult = this.mQClientFactory.findBrokerAddressInSubscribe(brokerName, MixAll.MASTER_ID, true);
             if (findBrokerResult != null) {
+                // 构建加锁请求
                 LockBatchRequestBody requestBody = new LockBatchRequestBody();
+                // 设置消费者组
                 requestBody.setConsumerGroup(this.consumerGroup);
+                // 设置ID
                 requestBody.setClientId(this.mQClientFactory.getClientId());
+                // 设置要加锁的消息队列
                 requestBody.setMqSet(mqs);
 
                 try {
+                    // 批量进行加锁，返回加锁成功的消息队列
                     Set<MessageQueue> lockOKMQSet =
                         this.mQClientFactory.getMQClientAPIImpl().lockBatchMQ(findBrokerResult.getBrokerAddr(), requestBody, 1000);
 
+                    // 遍历加锁成功的队列
                     for (MessageQueue mq : lockOKMQSet) {
+                        // 从处理队列表中获取对应的处理队列对象
                         ProcessQueue processQueue = this.processQueueTable.get(mq);
+                        // 如果不为空，设置locked为true表示加锁成功
                         if (processQueue != null) {
                             if (!processQueue.isLocked()) {
                                 log.info("the message queue locked OK, Group: {} {}", this.consumerGroup, mq);
                             }
 
+                            // 设置加锁成功标记
                             processQueue.setLocked(true);
                             processQueue.setLastLockTimestamp(System.currentTimeMillis());
                         }
                     }
+                    // 处理加锁失败的消息队列
                     for (MessageQueue mq : mqs) {
                         if (!lockOKMQSet.contains(mq)) {
                             ProcessQueue processQueue = this.processQueueTable.get(mq);
                             if (processQueue != null) {
+                                // 设置加锁失败标记
                                 processQueue.setLocked(false);
                                 log.warn("the message queue locked Failed, Group: {} {}", this.consumerGroup, mq);
                             }
@@ -381,6 +420,11 @@ public abstract class RebalanceImpl {
      *  c. 调用dispatchPullRequest处理拉取请求集合中的数据
      * 可以看到，经过这一步，如果分配给当前消费者的消费队列不在processQueueTable中，就会构建拉取请求PullRequest，然后调用dispatchPullRequest处理消息拉取请求。
      *
+     * 2. 在使用顺序消息时，会周期性的对订阅的消息队列进行加锁，不过由于负载均衡等原因，有可能给当前消费者分配新的消息队列，此时可能还未来得及通过定时任务加锁
+     *    ，所以消费者在构建消息拉取请求前会再次进行判断，如果processQueueTable中之前未包含某个消息队列，会先调用lock方法进行加锁，lock方法的实现逻辑与lockAll基本一致
+     *    ，如果加锁成功构建拉取请求进行消息拉取，如果加锁失败，则跳过继续处理下一个消息队列.
+     *
+     *
      *
      * @param topic 表示当前要进行负载均衡的主题
      * @param mqSet 中记录了重新分配给当前消费者的消息队列
@@ -442,6 +486,7 @@ public abstract class RebalanceImpl {
             // 前面将不在processQueueTable 中不在MQSet中的MessageQueue移除了，并且将过期的processQueue也移除了。
             // 如果之前不在processQueueTable中
             if (!this.processQueueTable.containsKey(mq)) {
+                // 如果是顺序消费，调用lock方法进行加锁，如果加锁失败不往下执行，继续处理下一个消息队列
                 if (isOrder && !this.lock(mq)) {
                     log.warn("doRebalance, {}, add a new mq failed, {}, because lock failed", consumerGroup, mq);
                     continue;
@@ -461,7 +506,7 @@ public abstract class RebalanceImpl {
                     if (pre != null) {
                         log.info("doRebalance, {}, mq already exists, {}", consumerGroup, mq);
                     } else {
-                        // 如果之前不存在，构建PullRequest，之后会加入到阻塞队列中，进行消息拉取
+                        // 如果之前不存在，构建PullRequest，之后会加入到阻塞队列中，拉取消息
                         log.info("doRebalance, {}, add a new mq, {}", consumerGroup, mq);
                         PullRequest pullRequest = new PullRequest();
                         // 设置消费组

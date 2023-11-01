@@ -62,6 +62,10 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
     private final BlockingQueue<Runnable> consumeRequestQueue;
     private final ThreadPoolExecutor consumeExecutor;
     private final String consumerGroup;
+    /**
+     * MessageQueueLock中使用了ConcurrentHashMap存储每个消息队列对应的对象锁，对象锁实际上是一个Object类的对象，从Map中获取消息队列的对象锁时
+     * ，如果对象锁不存在，则新建一个Object对象，并放入Map集合中。
+     */
     private final MessageQueueLock messageQueueLock = new MessageQueueLock();
     private final ScheduledExecutorService scheduledExecutorService;
     private volatile boolean stopped = false;
@@ -75,6 +79,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         this.consumerGroup = this.defaultMQPushConsumer.getConsumerGroup();
         this.consumeRequestQueue = new LinkedBlockingQueue<Runnable>();
 
+        // 设置消息消费线程池
         this.consumeExecutor = new ThreadPoolExecutor(
             this.defaultMQPushConsumer.getConsumeThreadMin(),
             this.defaultMQPushConsumer.getConsumeThreadMax(),
@@ -86,11 +91,19 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         this.scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("ConsumeMessageScheduledThread_"));
     }
 
+    /**
+     * 1. 为什么集群模式下需要加锁？
+     *      因为广播模式下，消息队列会分配给消费者下的每一个消费者，而在集群模式下，一个消息队列同一时刻只能被同一个消费组下的某一个消费者进行
+     *      ，所以在广播模式下不存在竞争关系，也就不需要对消息队列进行加锁，而在集群模式下，有可能因为负载均衡等原因将某一个消息队列分配到了另外一个消费者中
+     *      ，因此在集群模式下就要加锁，当某个消息队列被锁定时，其他的消费者不能进行消费。
+     */
     public void start() {
+        // 如果是集群模式
         if (MessageModel.CLUSTERING==ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel()) {
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
                 @Override
                 public void run() {
+                    // 周期性的执行加锁方法
                     ConsumeMessageOrderlyService.this.lockMQPeriodically();
                 }
             }, 1000 * 1, ProcessQueue.REBALANCE_LOCK_INTERVAL, TimeUnit.MILLISECONDS);
@@ -193,6 +206,14 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         return result;
     }
 
+    /**
+     * 1. 首先在ConsumeMessageOrderlyService的构造函数中可以看到，初始化了一个消息消费线程池，也就是说顺序消费时也是开启多线程进行消费的。
+     *
+     * @param msgs
+     * @param processQueue
+     * @param messageQueue
+     * @param dispathToConsume
+     */
     @Override
     public void submitConsumeRequest(
         final List<MessageExt> msgs,
@@ -200,6 +221,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         final MessageQueue messageQueue,
         final boolean dispathToConsume) {
         if (dispathToConsume) {
+            // 构建ConsumeRequest,是一个内部类
             ConsumeRequest consumeRequest = new ConsumeRequest(processQueue, messageQueue);
             this.consumeExecutor.submit(consumeRequest);
         }
@@ -207,6 +229,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
 
     public synchronized void lockMQPeriodically() {
         if (!this.stopped) {
+            // 进行加锁
             this.defaultMQPushConsumerImpl.getRebalanceImpl().lockAll();
         }
     }
@@ -395,8 +418,29 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
         }
     }
 
+    /**
+     * 1. ConsumeRequest是ConsumeMessageOrderlyService的内部类，它有两个成员变量，分别为MessageQueue消息队列和它对应的处理队列ProcessQueue对象。
+     * 在run方法中，对消息进行消费，处理逻辑如下：
+     *      a. 判断ProcessQueue是否被删除，如果被删除终止处理；
+     *      b. 调用messageQueueLock的ftchLockObject方法获取消息队列的对象锁，然后使用synchronized进行加锁，这里加锁的原因是因为顺序消费使用的是线程池
+     *          ，可以设置多个线程同时进行消费，所以某个线程在进行消息消费的时候要对消息队列加锁，防止其他线程并发消费，破坏消息的顺序性；
+     *      c. 如果是广播模式、或者当前的消息队列已经加锁成功（Locked置为true）并且加锁时间未过期，开始对拉取的消息进行遍历：
+     *          1. 如果是集群模式并且消息队列加锁失败，调用tryLockLaterAndReconsume稍后重新进行加锁；
+     *          2. 如果是集群模式并且消息队列加锁时间已经过期，调用tryLockLaterAndReconsume稍后重新进行加锁；
+     *          3. 如果当前时间距离开始处理的时间超过了最大消费时间，调用submitConsumeRequestLater稍后重新进行处理；
+     *          4. 获取批量消费消息个数，从ProcessQueue获取消息内容，如果消息获取不为空，添加消息消费锁，然后调用messageListener的consumeMessage方法进行消息消费；
+     *
+     *
+     *
+     */
     class ConsumeRequest implements Runnable {
+        /**
+         * 消息队列对应的处理队列
+         */
         private final ProcessQueue processQueue;
+        /**
+         * 消息队列
+         */
         private final MessageQueue messageQueue;
 
         public ConsumeRequest(ProcessQueue processQueue, MessageQueue messageQueue) {
@@ -412,49 +456,70 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
             return messageQueue;
         }
 
+        /**
+         * 1. 目前一共涉及了三把锁，它们分别对应不同的情况：
+         *      a. 向Broker申请的消息队列锁
+         *          1. 集群模式下一个消息队列同一时刻只能被同一个消费组下的某一个消费者进行，为了避免负载均衡等原因引起的变动，消费者会向Broker发送请求对消息队列进行加锁
+         *          ，如果加锁成功，记录到消息队列对应的ProcessQueue中的locked变量中，它是boolean类型的.
+         *      b. 消费者处理拉取消息时的消息队列锁
+         *          1. 消费者在处理拉取到的消息时，由于可以开启多线程进行处理，所以处理消息前通过MessageQueueLock中的mqLockTable获取到了消息队列对应的锁
+         *          ，锁住要处理的消息队列，这里加消息队列锁主要是处理多线程之间的竞争.
+         *      c. 消息消费锁
+         *          1. 消费者在调用consumeMessage方法之前会加消费锁，主要是为了避免在消费消息时，由于负载均衡等原因，ProcessQueue被删除.
+         *
+         *
+         *
+         *
+         */
         @Override
         public void run() {
+            // 处理队列如果已经被置为删除状态，跳过不进行处理
             if (this.processQueue.isDropped()) {
                 log.warn("run, the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                 return;
             }
-            // 获取当前的messageQueueLock 的锁
+            //  获取消息队列的对象锁
             final Object objLock = messageQueueLock.fetchLockObject(this.messageQueue);
+            // 对象消息队列的对象锁加锁
             synchronized (objLock) {
-                // 广播模式
+                // 如果是广播模式、或者当前的消息队列已经加锁成功并且加锁时间未过期
                 if (MessageModel.BROADCASTING==ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel()
                     || (this.processQueue.isLocked() && !this.processQueue.isLockExpired())) {
                     final long beginTime = System.currentTimeMillis();
                     for (boolean continueConsume = true; continueConsume; ) {
+                        // 判断processQueue是否删除
                         if (this.processQueue.isDropped()) {
                             log.warn("the message queue not be able to consume, because it's dropped. {}", this.messageQueue);
                             break;
                         }
-                        // 集群模式没有获得锁
+                        // 如果是集群模式并且processQueue的加锁失败
                         if (MessageModel.CLUSTERING==ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel()
                             && !this.processQueue.isLocked()) {
                             log.warn("the message queue not locked, so consume later, {}", this.messageQueue);
+                            // 稍后进行加锁（10ms后进行处理）
                             ConsumeMessageOrderlyService.this.tryLockLaterAndReconsume(this.messageQueue, this.processQueue, 10);
                             break;
                         }
-                        // 集群模式锁过期了
+                        // 如果是集群模式并且消息队列加锁时间已经过期
                         if (MessageModel.CLUSTERING==ConsumeMessageOrderlyService.this.defaultMQPushConsumerImpl.messageModel()
                             && this.processQueue.isLockExpired()) {
                             log.warn("the message queue lock expired, so consume later, {}", this.messageQueue);
+                            // 稍后进行加锁（10ms后进行处理）
                             ConsumeMessageOrderlyService.this.tryLockLaterAndReconsume(this.messageQueue, this.processQueue, 10);
                             break;
                         }
 
                         long interval = System.currentTimeMillis() - beginTime;
-                        // 如果 重试获取锁等时间超过60s，则分配一个消费者
+                        // 如果当前时间距离开始处理的时间超过了最大消费时间 （如果 重试获取锁等时间超过60s，则分配一个消费者  ）
                         if (interval > MAX_TIME_CONSUME_CONTINUOUSLY) {
+                            // 稍后重新进行处理（10ms后进行处理）
                             ConsumeMessageOrderlyService.this.submitConsumeRequestLater(processQueue, messageQueue, 10);
                             break;
                         }
-                        // 批量从processQueue消息
+                        // // 批量消费消息个数
                         final int consumeBatchSize =
                             ConsumeMessageOrderlyService.this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
-                        // 连续同阻塞队列弹出消息并返回
+                        //获取消息内容， 连续同阻塞队列弹出消息并返回
                         List<MessageExt> msgs = this.processQueue.takeMessages(consumeBatchSize);
                         defaultMQPushConsumerImpl.resetRetryAndNamespace(msgs, defaultMQPushConsumer.getConsumerGroup());
                         if (!msgs.isEmpty()) {
@@ -480,7 +545,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeReturnType returnType = ConsumeReturnType.SUCCESS;
                             boolean hasException = false;
                             try {
-                                // 获取处理锁
+                                // 加消费锁
                                 this.processQueue.getLockConsume().lock();
                                 if (this.processQueue.isDropped()) {
                                     log.warn("consumeMessage, the message queue not be able to consume, because it's dropped. {}",
@@ -498,7 +563,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                                     messageQueue);
                                 hasException = true;
                             } finally {
-                                // 释放锁
+                                // 释放消息消费锁
                                 this.processQueue.getLockConsume().unlock();
                             }
 

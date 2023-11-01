@@ -222,7 +222,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     }
 
     /**
-     * 拉消息
+     * TODO 拉取消息和回调函数
      *
      * 1. DefaultMQPushConsumerImpl的pullMessage方法进行消息拉取，处理逻辑如下：
      *  a. 从拉取请求中获取处理队列processQueue，判断是否置为Dropped删除状态，如果处于删除状态不进行处理
@@ -233,6 +233,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
      *  e. 创建消息拉取后的回调函数PullCallback
      *  f. 构建消息拉取系统标记
      *  g. 通过PullAPIWrapper的pullKernelImpl方法向Broker发送拉取消息请求
+     *
+     * 2. 如果从Broker拉取到消息，会调用ConsumeMessageService的submitConsumeRequest方法将消息提交到ConsumeMessageService中进行消费, 顺序消息使用的是ConsumeMessageOrderlyService。
+     *
      *
      * @param pullRequest
      */
@@ -394,7 +397,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                                 // 放拉取到的消息 , 将消息加入到processQueue
                                 boolean dispatchToConsume = processQueue.putMessage(pullResult.getMsgFoundList());
-                                // 将消息提交到ConsumeMessageService中进行消费（异步处理）
+                                // 如果拉取到消息，将消息提交到ConsumeMessageService中进行消费（异步处理），顺消息（ConsumeMessageOrderlyService）和普同消息(ConsumeMessageConcurrentlyService) 都是这个
                                 DefaultMQPushConsumerImpl.this.consumeMessageService.submitConsumeRequest(
                                     pullResult.getMsgFoundList(),
                                     processQueue,
@@ -757,6 +760,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 this.offsetStore.load();
                 // 如果是顺序消费
                 if (this.getMessageListenerInner() instanceof MessageListenerOrderly) {
+                    // 设置顺序消费标记
                     this.consumeOrderly = true;
                     // 创建顺序消费service：ConsumeMessageOrderlyService
                     this.consumeMessageService =
