@@ -707,6 +707,7 @@ public class CommitLog {
 
         // 执行刷盘
         CompletableFuture<PutMessageStatus> flushResultFuture = submitFlushRequest(result, msg);
+        // 处理主从同步的
         CompletableFuture<PutMessageStatus> replicaResultFuture = submitReplicaRequest(result, msg);
         return flushResultFuture.thenCombine(replicaResultFuture, (flushStatus, replicaStatus) -> {
             if (flushStatus != PutMessageStatus.PUT_OK) {
@@ -1065,14 +1066,27 @@ public class CommitLog {
         }
     }
 
+    /**
+     * Master节点中，当消息被写入到CommitLog以后，会调用 submitReplicaRequest 方法处主从同步，首先判断当前Broker的角色是否是SYNC_MASTER
+     * ，如果是则会构建消息提交请求GroupCommitRequest，然后调用HAService的putRequest添加到请求集合中，并唤醒GroupTransferService中在等待的线程.
+     *
+     * @param result
+     * @param messageExt
+     * @return
+     */
     public CompletableFuture<PutMessageStatus> submitReplicaRequest(AppendMessageResult result, MessageExt messageExt) {
+        // Broker的角色是否是SYNC_MASTER，如果是则会构建消息提交请求GroupCommitRequest，然后调用HAService的putRequest添加到请求集合中
+        // ，并唤醒GroupTransferService中在等待的线程
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
             if (messageExt.isWaitStoreMsgOK()) {
                 if (service.isSlaveOK(result.getWroteBytes() + result.getWroteOffset())) {
+                    // 构建GroupCommitRequest
                     GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),
                             this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+                    // 添加请求
                     service.putRequest(request);
+                    // 唤醒GroupTransferService中在等待的线程
                     service.getWaitNotifyObject().wakeupAll();
                     return request.future();
                 }

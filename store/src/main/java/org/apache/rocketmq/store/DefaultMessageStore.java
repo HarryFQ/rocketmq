@@ -290,7 +290,9 @@ public class DefaultMessageStore implements MessageStore {
             this.recoverTopicQueueTable();
         }
 
+        // 启动HAService
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
+            // 启动HAService
             this.haService.start();
             this.handleScheduleMessageService(messageStoreConfig.getBrokerRole());
         }
