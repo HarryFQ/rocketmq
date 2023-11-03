@@ -605,6 +605,15 @@ public class DefaultMessageStore implements MessageStore {
      *  e. NO_MATCHED_LOGIC_QUEUE：如果根据主题未找到消息队列，返回没有匹配的队列
      *  f. FOUND：待拉取消息偏移量介于最大最小偏移量之间，此时根据拉取偏移量和大小从CommitLog中获取消息数据.
      *
+     * 3. 是否建议从Slave节点拉取的设置
+     *  a. DefaultMessageStore的getMessage方法中用于获取消息内容，并会根据消费者的拉取进度判断是否建议下次从Slave节点拉取消息，判断过程如下：
+     *      1. diff：当前CommitLog最大的偏移量减去本次拉取消息的最大物理偏移量，表示剩余未拉取的消息；
+     *      2. memory：消息在PageCache中的总大小，计算方式是总物理内存 * 消息存储在内存中的阀值（默认为40）/100，也就是说MQ会缓存一部分消息在操作系统的PageCache中
+     *      ，加速访问；
+     *      3. 如果diff大于memory，表示未拉取的消息过多，已经超出了PageCache缓存的数据的大小，还需要从磁盘中获取消息，所以此时会建议下次从Slave节点拉取；
+     *  总结
+     *      消费者在启动后需要向Broker发送拉取消息的请求，Broker收到请求后会根据消息的拉取进度，返回一个建议的BrokerID，并设置到响应中返回，消费者处理响应时将建议的BrokerID放入pullFromWhichNodeTable，下次拉去消息的时候从pullFromWhichNodeTable中取出，并向其发送请求拉取消息。
+     *
      *
      * @param group Consumer group that launches this query.
      * @param topic Topic to query.
@@ -673,6 +682,7 @@ public class DefaultMessageStore implements MessageStore {
                 }
             } else {
                 // 根据偏移量获取消息队列对应的ConsumeQueue
+                // 根据消费进度获取消息队列
                 SelectMappedBufferResult bufferConsumeQueue = consumeQueue.getIndexBuffer(offset);
                 // 如果不为空
                 if (bufferConsumeQueue != null) {
@@ -766,9 +776,12 @@ public class DefaultMessageStore implements MessageStore {
                         // 计算下次拉取偏移量
                         nextBeginOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
 
+                        // CommitLog最大偏移量减去本次拉取消息的最大物理偏移量, 表示剩余未拉取的消息；
                         long diff = maxOffsetPy - maxPhyOffsetPulling;
+                        // 计算消息在PageCache中的总大小（总物理内存 * 消息存储在内存中的阀值/100）
                         long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE
                             * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
+                        // 是否建议下次去从节点拉取消息
                         getResult.setSuggestPullingFromSlave(diff > memory);
                     } finally {
 

@@ -95,6 +95,17 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
      *  b. 设置响应信息，之后将消息查找结果响应给发送者
      *  c. 如果本次消息未查找到（有可能消息还未到达），并且允许将请求挂起，则将拉取请求提交到PullRequestHoldService中进行挂起，稍后重新拉取
      *
+     * 2. 根据什么条件决定选择哪个Broker的?
+     *  Broker在处理消费者拉取请求时，会调用PullMessageProcessor的processRequest方法，首先会调用MessageStore的getMessage方法获取消息内容
+     *  ，在返回的结果GetMessageResult中设置了一个是否建议从Slave节点拉取的属性(这个值的设置稍后再说)，会根据是否建议从slave节点进行以下处理：
+     *      a. 如果建议从slave节点拉取消息，会调用subscriptionGroupConfig订阅分组配置的getWhichBrokerWhenConsumeSlowly方法获取从节点将ID设置到响应中
+     *          ，否则下次依旧建议从主节点拉取消息，将MASTER节点的ID设置到响应中；
+     *      b. 判断当前Broker的角色，如果是slave节点，并且配置了不允许从slave节点读取数据（SlaveReadEnable = false），此时依旧建议从主节点拉取消息
+     *         ，将MASTER节点的ID设置到响应中；
+     *      c. 如果开启了允许从slave节点读取数据（SlaveReadEnable = true），有以下两种情况：
+     *          1. 如果建议从slave节点拉消息，从订阅分组配置中获取从节点的ID，将ID设置到响应中；
+     *          2. 如果不建议从slave节点拉取消息，从订阅分组配置中获取设置的Broker Id；当然，如果未开启允许从Slave节点读取数据，下次依旧建议从Master节点拉取；
+     *
      *
      * @param channel
      * @param request
@@ -250,6 +261,7 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                 this.brokerController.getConsumerFilterManager());
         }
         // 拉取消息
+        // 根据拉取偏移量获取消息
         final GetMessageResult getMessageResult =
             this.brokerController.getMessageStore().getMessage(requestHeader.getConsumerGroup(), requestHeader.getTopic(),
                 requestHeader.getQueueId(), requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(), messageFilter);
@@ -263,17 +275,21 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
             // 设置最大偏移量
             responseHeader.setMaxOffset(getMessageResult.getMaxOffset());
 
+            // 是否建议从从节点拉取消息
             if (getMessageResult.isSuggestPullingFromSlave()) {
+                // 选择一个从节点
                 responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getWhichBrokerWhenConsumeSlowly());
             } else {
                 responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
             }
 
+            // 判断Broker的角色
             switch (this.brokerController.getMessageStoreConfig().getBrokerRole()) {
                 case ASYNC_MASTER:
                 case SYNC_MASTER:
                     break;
                 case SLAVE:
+                    // 如果不允许从从节点读取数据，设置为MasterID
                     if (!this.brokerController.getBrokerConfig().isSlaveReadEnable()) {
                         response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);
                         responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
@@ -281,16 +297,21 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
                     break;
             }
 
+            // 如果开启了允许从从节点读取数据
             if (this.brokerController.getBrokerConfig().isSlaveReadEnable()) {
                 // consume too slow ,redirect to another machine
+                // 如果建议从从节点拉消息
                 if (getMessageResult.isSuggestPullingFromSlave()) {
+                    // 获取从节点
                     responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getWhichBrokerWhenConsumeSlowly());
                 }
                 // consume ok
                 else {
+                    // 获取指定的broker
                     responseHeader.setSuggestWhichBrokerId(subscriptionGroupConfig.getBrokerId());
                 }
             } else {
+                // 使用Master节点
                 responseHeader.setSuggestWhichBrokerId(MixAll.MASTER_ID);
             }
 

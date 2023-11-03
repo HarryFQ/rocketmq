@@ -45,6 +45,11 @@ public class SlaveSynchronize {
         this.masterAddr = masterAddr;
     }
 
+    /**
+     * 1. 在SlaveSynchronize的syncAll方法中，又调用了syncConsumerOffset方法同步消费进度：
+     *      a. 向主节点发送请求获取消费进度数据；
+     *      b. 从节点将获取到的消费进度数据进行持久化；
+     */
     public void syncAll() {
         //同步Topic配置信息 --TopicConfigManager
         this.syncTopicConfig();
@@ -84,10 +89,13 @@ public class SlaveSynchronize {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null && !masterAddrBak.equals(brokerController.getBrokerAddr())) {
             try {
+                // 向主节点发送请求获取消费进度信息
                 ConsumerOffsetSerializeWrapper offsetWrapper =
                     this.brokerController.getBrokerOuterAPI().getAllConsumerOffset(masterAddrBak);
+                // 设置数据
                 this.brokerController.getConsumerOffsetManager().getOffsetTable()
                     .putAll(offsetWrapper.getOffsetTable());
+                // 将获取到的消费进度数据进行持久化
                 this.brokerController.getConsumerOffsetManager().persist();
                 log.info("Update slave consumer offset from master, {}", masterAddrBak);
             } catch (Exception e) {

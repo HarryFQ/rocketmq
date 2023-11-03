@@ -54,6 +54,15 @@ public class PullAPIWrapper {
     private final MQClientInstance mQClientFactory;
     private final String consumerGroup;
     private final boolean unitMode;
+
+    /**
+     * KEY为消息队列，VALUE为建议的Broker ID
+     * 通过调用关系可知，在updatePullFromWhichNode方法中更新了pullFromWhichNodeTable的值，而updatePullFromWhichNode方法又是被processPullResult方法调用的
+     * ，消费者向Broker发送拉取消息请求后，Broker对拉取请求进行处理时会设置一个broker ID（后面会讲到），建议下次从这个Broker拉取消息
+     * ，消费者对拉取请求返回的响应数据进行处理时会调用processPullResult方法，在这里将建议的BrokerID取出，调用updatePullFromWhichNode方法将其加入到了pullFromWhichNodeTable中：
+     *
+     *
+     */
     private ConcurrentMap<MessageQueue, AtomicLong/* brokerId */> pullFromWhichNodeTable =
         new ConcurrentHashMap<MessageQueue, AtomicLong>(32);
     private volatile boolean connectBrokerByUser = false;
@@ -71,6 +80,7 @@ public class PullAPIWrapper {
         final SubscriptionData subscriptionData) {
         PullResultExt pullResultExt = (PullResultExt) pullResult;
 
+        // 将拉取消息请求返回的建议Broker ID，加入到pullFromWhichNodeTable中
         this.updatePullFromWhichNode(mq, pullResultExt.getSuggestWhichBrokerId());
         if (PullStatus.FOUND == pullResult.getPullStatus()) {
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
@@ -116,9 +126,32 @@ public class PullAPIWrapper {
         return pullResult;
     }
 
+    /**
+     * 1. 在updatePullFromWhichNode方法中更新了pullFromWhichNodeTable的值，而updatePullFromWhichNode方法又是被processPullResult方法调用的
+     * ，消费者向Broker发送拉取消息请求后，Broker对拉取请求进行处理时会设置一个broker ID（后面会讲到），建议下次从这个Broker拉取消息
+     * ，消费者对拉取请求返回的响应数据进行处理时会调用processPullResult方法，在这里将建议的BrokerID取出，调用updatePullFromWhichNode方法将其加入到了pullFromWhichNodeTable中.
+     *
+     * 2. 接下来去看下是根据什么条件决定选择哪个Broker的?
+     *  Broker在处理消费者拉取请求时，会调用PullMessageProcessor的processRequest方法，首先会调用MessageStore的getMessage方法获取消息内容
+     *  ，在返回的结果GetMessageResult中设置了一个是否建议从Slave节点拉取的属性(这个值的设置稍后再说)，会根据是否建议从slave节点进行以下处理：
+     *      a. 如果建议从slave节点拉取消息，会调用subscriptionGroupConfig订阅分组配置的getWhichBrokerWhenConsumeSlowly方法获取从节点将ID设置到响应中
+     *          ，否则下次依旧建议从主节点拉取消息，将MASTER节点的ID设置到响应中；
+     *      b. 判断当前Broker的角色，如果是slave节点，并且配置了不允许从slave节点读取数据（SlaveReadEnable = false），此时依旧建议从主节点拉取消息
+     *          ，将MASTER节点的ID设置到响应中；
+     *      c. 如果开启了允许从slave节点读取数据（SlaveReadEnable = true），有以下两种情况：
+     *          1. 如果建议从slave节点拉消息，从订阅分组配置中获取从节点的ID，将ID设置到响应中；
+     *          2. 如果不建议从slave节点拉取消息，从订阅分组配置中获取设置的Broker Id；当然，如果未开启允许从Slave节点读取数据，下次依旧建议从Master节点拉取；
+     *
+     *总结
+     * 1. 消费者在启动后需要向Broker发送拉取消息的请求，Broker收到请求后会根据消息的拉取进度，返回一个建议的BrokerID，并设置到响应中返回
+     *  ，消费者处理响应时将建议的BrokerID放入pullFromWhichNodeTable，下次拉去消息的时候从pullFromWhichNodeTable中取出，并向其发送请求拉取消息.
+     * @param mq
+     * @param brokerId
+     */
     public void updatePullFromWhichNode(final MessageQueue mq, final long brokerId) {
         AtomicLong suggest = this.pullFromWhichNodeTable.get(mq);
         if (null == suggest) {
+            // 向pullFromWhichNodeTable中添加数据
             this.pullFromWhichNodeTable.put(mq, new AtomicLong(brokerId));
         } else {
             suggest.set(brokerId);
@@ -143,6 +176,9 @@ public class PullAPIWrapper {
 
     /**
      * PullAPIWrapper中主要是获取了Broker的地址，然后创建拉取请求头PullMessageRequestHeader，设置拉取的相关信息，然后调用MQClientAPIImpl的pullMessage拉取消息：
+     *
+     *
+     *
      * @param mq
      * @param subExpression
      * @param expressionType
@@ -176,6 +212,7 @@ public class PullAPIWrapper {
         final PullCallback pullCallback
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         // 根据BrokerName获取Broker信息
+        // 调用recalculatePullFromWhichNode方法获取Broker ID，再调用findBrokerAddressInSubscribe根据ID获取Broker的相关信息
         FindBrokerResult findBrokerResult =
             this.mQClientFactory.findBrokerAddressInSubscribe(mq.getBrokerName(),
                 this.recalculatePullFromWhichNode(mq), false);
@@ -241,16 +278,25 @@ public class PullAPIWrapper {
         throw new MQClientException("The broker[" + mq.getBrokerName() + "] not exist", null);
     }
 
+    /**
+     * 在recalculatePullFromWhichNode方法中，会从pullFromWhichNodeTable中根据消息队列获取一个建议的Broker ID，如果获取为空就返回Master节点的Broker ID
+     * ，ROCKETMQ中Master角色的Broker ID为0，既然从pullFromWhichNodeTable中可以知道从哪个Broker拉取数据，那么pullFromWhichNodeTable中的数据又是从哪里来的？
+     *
+     * @param mq
+     * @return
+     */
     public long recalculatePullFromWhichNode(final MessageQueue mq) {
         if (this.isConnectBrokerByUser()) {
             return this.defaultBrokerId;
         }
 
+        // 从pullFromWhichNodeTable中获取建议的broker ID
         AtomicLong suggest = this.pullFromWhichNodeTable.get(mq);
         if (suggest != null) {
             return suggest.get();
         }
 
+        // 返回Master Broker ID
         return MixAll.MASTER_ID;
     }
 

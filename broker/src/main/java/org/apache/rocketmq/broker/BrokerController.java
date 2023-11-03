@@ -193,7 +193,7 @@ public class BrokerController {
         this.subscriptionGroupManager = new SubscriptionGroupManager(this);
         this.brokerOuterAPI = new BrokerOuterAPI(nettyClientConfig);
         this.filterServerManager = new FilterServerManager(this);
-
+        // 数据同步
         this.slaveSynchronize = new SlaveSynchronize(this);
 
         this.sendThreadPoolQueue = new LinkedBlockingQueue<Runnable>(this.brokerConfig.getSendThreadPoolQueueCapacity());
@@ -913,8 +913,11 @@ public class BrokerController {
             this.filterServerManager.start();
         }
 
+        // BrokerController在构造函数中，实例化了SlaveSynchronize，并在start方法中调用了handleSlaveSynchronize方法处理从节点的数据同步
+        // ，如果当前的Broker是从节点，会注册定时任务，定时调用SlaveSynchronize的syncAll方法进行数据同步：
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
             startProcessorByHa(messageStoreConfig.getBrokerRole());
+            // 处理从节点的同步
             handleSlaveSynchronize(messageStoreConfig.getBrokerRole());
             this.registerBrokerAll(true, false, true);
         }
@@ -1168,15 +1171,18 @@ public class BrokerController {
     }
 
     private void handleSlaveSynchronize(BrokerRole role) {
+        // 如果是SLAVE节点
         if (role == BrokerRole.SLAVE) {
             if (null != slaveSyncFuture) {
                 slaveSyncFuture.cancel(false);
             }
             this.slaveSynchronize.setMasterAddr(null);
+            // 设置定时任务，定时进行数据同步
             slaveSyncFuture = this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
                 @Override
                 public void run() {
                     try {
+                        // 同步数据
                         BrokerController.this.slaveSynchronize.syncAll();
                     }
                     catch (Throwable e) {

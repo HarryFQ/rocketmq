@@ -25,6 +25,8 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 
 /**
  * Offset store interface
+ * 消费进度持久化
+ * 广播模式下消费进度保存在每个消费者端，集群模式下消费进度保存在Broker端，所以接下来以集群模式为例。
  */
 public interface OffsetStore {
     /**

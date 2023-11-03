@@ -1124,6 +1124,23 @@ public class MQClientInstance {
         return null;
     }
 
+    /**
+     * 1. 由于updateConsumeOffsetToBroker方法中先调用了findBrokerAddressInSubscribe方法获取Broker的信息，所以这里先看findBrokerAddressInSubscribe方法是如何选择Broker的，它需要传入三个参数，分别为：Broker名称、Broker ID、是否只查找参数中传入的那个BrokerID，方法的处理逻辑如下：
+     *      a. 首先从brokerAddrTable中根据Broker的名称获取所有的Broker集合（主从模式下他们的Broker名称一致，但是ID不一致），KEY为BrokerID，VALUE为Broker的地址；
+     *      b. 从Broker集合中根据参数中传入的ID获取broker地址；
+     *      c. 判断参数中传入的BrokerID是否是主节点，记录在slave变量中；
+     *      d. 判断获取的Broker地址是否为空，记录在found变量中；
+     *      e. 如果根据BrokerId获取的地址为空并且参数中传入的BrokerId为从节点，继续轮询获取下一个Broker，并判断地址是否为空；
+     *      f. 如果此时地址依旧为空并且onlyThisBroker传入的false(也就是不必须选择参数中传入的那个BrokerID)，此时获取map集合中的第一个节点；
+     *      g. 判断获取到的Broker地址是否为空，不为空封装结果返回，否则返回NULL；
+     *
+     *
+     *
+     * @param brokerName  Broker名称
+     * @param brokerId Broker ID
+     * @param onlyThisBroker  是否只查找参数中传入的那个BrokerID
+     * @return
+     */
     public FindBrokerResult findBrokerAddressInSubscribe(
         final String brokerName,
         final long brokerId,
@@ -1133,26 +1150,37 @@ public class MQClientInstance {
         boolean slave = false;
         boolean found = false;
 
+        // 获取所有的Broker ID
         HashMap<Long/* brokerId */, String/* address */> map = this.brokerAddrTable.get(brokerName);
         if (map != null && !map.isEmpty()) {
             brokerAddr = map.get(brokerId);
+            // 是否是从节点
             slave = brokerId != MixAll.MASTER_ID;
+            // 地址是否为空
             found = brokerAddr != null;
 
+            // 如果地址为空并且是从节点
             if (!found && slave) {
+                // 获取下一个Broker
                 brokerAddr = map.get(brokerId + 1);
                 found = brokerAddr != null;
             }
 
+            // 如果地址为空
             if (!found && !onlyThisBroker) {
+                // 获取集合中的第一个节点
                 Entry<Long, String> entry = map.entrySet().iterator().next();
+                // 获取地址
                 brokerAddr = entry.getValue();
+                // 是否是从节点
                 slave = entry.getKey() != MixAll.MASTER_ID;
+                // 置为true
                 found = true;
             }
         }
 
         if (found) {
+            // 返回数据
             return new FindBrokerResult(brokerAddr, slave, findBrokerVersion(brokerName, brokerAddr));
         }
 
