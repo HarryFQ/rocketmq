@@ -78,7 +78,10 @@ public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implemen
             case RequestCode.CHECK_TRANSACTION_STATE:
                 //事务状态回查请求的处理在ClientRemotingProcessor中，如果请求类型是CHECK_TRANSACTION_STATE表示是事务状态回查请求
                 return this.checkTransactionState(ctx, request);
-            case RequestCode.NOTIFY_CONSUMER_IDS_CHANGED:
+            case RequestCode.NOTIFY_CONSUMER_IDS_CHANGED: // NOTIFY_CONSUMER_IDS_CHANGED请求处理
+                // 处理变更请求 ，在{@Broker2Client.notifyConsumerIdsChanged} 发送的
+                // 消费者对Broker发送的NOTIFY_CONSUMER_IDS_CHANGED的请求处理在ClientRemotingProcessor的processRequest方法中，它会调用notifyConsumerIdsChanged方法进行处理
+                // ，在notifyConsumerIdsChanged方法中可以看到触发了一次负载均衡
                 return this.notifyConsumerIdsChanged(ctx, request);
             case RequestCode.RESET_CONSUMER_CLIENT_OFFSET:
                 return this.resetOffset(ctx, request);
@@ -155,6 +158,13 @@ public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implemen
         return null;
     }
 
+    /**
+     * 变更通知请求处理
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand notifyConsumerIdsChanged(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         try {
@@ -163,6 +173,7 @@ public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implemen
             log.info("receive broker's notification[{}], the consumer group: {} changed, rebalance immediately",
                 RemotingHelper.parseChannelRemoteAddr(ctx.channel()),
                 requestHeader.getConsumerGroup());
+            // 触发负载均衡
             this.mqClientFactory.rebalanceImmediately();
         } catch (Exception e) {
             log.error("notifyConsumerIdsChanged exception", RemotingHelper.exceptionSimpleDesc(e));

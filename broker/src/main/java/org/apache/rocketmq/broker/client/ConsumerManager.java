@@ -95,33 +95,67 @@ public class ConsumerManager {
         }
     }
 
+    /**
+     *进行注册：
+     * 1. registerConsumer方法的理逻辑如下：
+     *  1. 根据组名称获取该消费者组的信息ConsumerGroupInfo对象。如果获取为空，会创建一个ConsumerGroupInfo，记录了消费者组的相关信息；
+     *  2. 判断消费者是否发生了变更，如果如果发生了变化，会触发CHANGE变更事件（这个稍后再看）；
+     *  3. 触发REGISTER注册事件
+     *2. 在消费者注册时讲到，如果发现消费者有变更会触发变更事件，当处于以下两种情况之一时会被判断为消费者发生了变化，需要进行负载均衡：
+     *  1. 当前注册的消费者对应的Channel对象之前不存在；
+     *  2. 当前注册的消费者订阅的主题信息发生了变化，也就是消费者订阅的主题有新增或者删除
+     *
+     * @param group 消费者组名称
+     * @param clientChannelInfo 注册的消费者对应的Channel信息
+     * @param consumeType 消费类型
+     * @param messageModel
+     * @param consumeFromWhere 消费消息的位置
+     * @param subList 消费者订阅的主题信息
+     * @param isNotifyConsumerIdsChangedEnable 是否通知变更
+     * @return
+     */
     public boolean registerConsumer(final String group, final ClientChannelInfo clientChannelInfo,
         ConsumeType consumeType, MessageModel messageModel, ConsumeFromWhere consumeFromWhere,
         final Set<SubscriptionData> subList, boolean isNotifyConsumerIdsChangedEnable) {
 
+        // 根据组名称获取消费者组信息
         ConsumerGroupInfo consumerGroupInfo = this.consumerTable.get(group);
         if (null == consumerGroupInfo) {
+            // 如果为空新增ConsumerGroupInfo对象
             ConsumerGroupInfo tmp = new ConsumerGroupInfo(group, consumeType, messageModel, consumeFromWhere);
             ConsumerGroupInfo prev = this.consumerTable.putIfAbsent(group, tmp);
             consumerGroupInfo = prev != null ? prev : tmp;
         }
 
+        // 更新Channel
         boolean r1 =
             consumerGroupInfo.updateChannel(clientChannelInfo, consumeType, messageModel,
                 consumeFromWhere);
+        // 更新订阅信息
         boolean r2 = consumerGroupInfo.updateSubscription(subList);
 
+        // 如果有变更
         if (r1 || r2) {
             if (isNotifyConsumerIdsChangedEnable) {
+                // 通知变更，consumerGroupInfo中存储了该消费者组下的所有消费者的channel ,在  DefaultConsumerIdsChangeListener.handle 中处理。
                 this.consumerIdsChangeListener.handle(ConsumerGroupEvent.CHANGE, group, consumerGroupInfo.getAllChannel());
             }
         }
 
+        // 注册Consumer
         this.consumerIdsChangeListener.handle(ConsumerGroupEvent.REGISTER, group, subList);
 
         return r1 || r2;
     }
 
+    /**
+     * 在ConsumerManager的unregisterConsumer方法中，可以看到触发了取消注册事件，之后如果开启了允许通知变更，会触发变更事件，变更事件在上面已经讲解过
+     * ，它会通知消费者组下的所有消费者进行一次负载均衡
+     *
+     * @param group
+     * @param clientChannelInfo
+     * @param isNotifyConsumerIdsChangedEnable
+     */
     public void unregisterConsumer(final String group, final ClientChannelInfo clientChannelInfo,
         boolean isNotifyConsumerIdsChangedEnable) {
         ConsumerGroupInfo consumerGroupInfo = this.consumerTable.get(group);
@@ -132,10 +166,12 @@ public class ConsumerManager {
                 if (remove != null) {
                     log.info("unregister consumer ok, no any connection, and remove consumer group, {}", group);
 
+                    // 触发取消注册事件
                     this.consumerIdsChangeListener.handle(ConsumerGroupEvent.UNREGISTER, group);
                 }
             }
             if (isNotifyConsumerIdsChangedEnable) {
+                // 触发消费者变更事件
                 this.consumerIdsChangeListener.handle(ConsumerGroupEvent.CHANGE, group, consumerGroupInfo.getAllChannel());
             }
         }

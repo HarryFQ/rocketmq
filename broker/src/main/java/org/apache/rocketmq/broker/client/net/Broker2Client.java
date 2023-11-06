@@ -81,6 +81,12 @@ public class Broker2Client {
         return this.brokerController.getRemotingServer().invokeSync(channel, request, 10000);
     }
 
+    /**
+     * 可以看到会创建NOTIFY_CONSUMER_IDS_CHANGED请求并发送
+     *
+     * @param channel
+     * @param consumerGroup
+     */
     public void notifyConsumerIdsChanged(
         final Channel channel,
         final String consumerGroup) {
@@ -91,10 +97,12 @@ public class Broker2Client {
 
         NotifyConsumerIdsChangedRequestHeader requestHeader = new NotifyConsumerIdsChangedRequestHeader();
         requestHeader.setConsumerGroup(consumerGroup);
+        //  创建变更通知请求
         RemotingCommand request =
             RemotingCommand.createRequestCommand(RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, requestHeader);
 
         try {
+            // 发送请求
             this.brokerController.getRemotingServer().invokeOneway(channel, request, 10);
         } catch (Exception e) {
             log.error("notifyConsumerIdsChanged exception. group={}, error={}", consumerGroup, e.toString());

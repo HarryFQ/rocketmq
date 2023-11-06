@@ -665,6 +665,8 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             case RUNNING:
                 this.consumeMessageService.shutdown(awaitTerminateMillis);
                 this.persistConsumerOffset();
+                // 取消注册
+                // 消费者在停止时，需要将当前消费者负责的消息队列分配给其他消费者进行消费，所以在shutdown方法中会调用MQClientInstance的unregisterConsumer方法取消注册
                 this.mQClientFactory.unregisterConsumer(this.defaultMQPushConsumer.getConsumerGroup());
                 this.mQClientFactory.shutdown();
                 log.info("the consumer [{}] shutdown OK", this.defaultMQPushConsumer.getConsumerGroup());
@@ -802,12 +804,12 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 break;
         }
 
-        // 从NameServer更新Topic的路由信息
+        // ，在进行负载均衡之前首先要更新主题的路由信息，从NameServer更新Topic的路由信息
         this.updateTopicSubscribeInfoWhenSubscriptionChanged();
         this.mQClientFactory.checkClientInBroker();
         // 向所有的Broker发送心跳
         this.mQClientFactory.sendHeartbeatToAllBrokerWithLock();
-        // 唤醒负载均衡服务，也就是调用MQClientInstance的rebalanceImmediately方法
+        // 唤醒负载均衡服务，也就是调用MQClientInstance的rebalanceImmediately方法。
         this.mQClientFactory.rebalanceImmediately();
     }
 
@@ -1032,11 +1034,19 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         return messageListenerInner;
     }
 
+    /**
+     * 为了保证消费者拿到的主题路由信息是最新的（topic下有几个消息队列、消息队列的分布信息等），在进行负载均衡之前首先要更新主题的路由信息
+     * ，在updateTopicSubscribeInfoWhenSubscriptionChanged方法中可以看到，首先获取了当前消费者订阅的所有主题信息（一个消费者可以订阅多个主题）
+     * ，然后进行遍历，向NameServer发送请求，更新每一个主题的路由信息，保证路由信息是最新的。
+     */
     private void updateTopicSubscribeInfoWhenSubscriptionChanged() {
+        // 获取当前消费者订阅的主题信息
         Map<String, SubscriptionData> subTable = this.getSubscriptionInner();
         if (subTable != null) {
+            // 遍历订阅的主题信息
             for (final Map.Entry<String, SubscriptionData> entry : subTable.entrySet()) {
                 final String topic = entry.getKey();
+                // 从NameServer更新主题的路由信息
                 this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic);
             }
         }

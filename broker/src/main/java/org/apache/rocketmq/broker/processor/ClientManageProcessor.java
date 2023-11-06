@@ -56,8 +56,12 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
         throws RemotingCommandException {
         switch (request.getCode()) {
             case RequestCode.HEART_BEAT:
+                //如果请求是HEART_BEAT类型会调用heartBeat方法进行处理，这里也能看还有UNREGISTER_CLIENT类型的请求，从名字上可以看出是与取消注册有关的
                 return this.heartBeat(ctx, request);
             case RequestCode.UNREGISTER_CLIENT:
+                // 取消注册请求
+                // 注册消费者的请求处理一样，Broker对UNREGISTER_CLIENT的请求同样是在ClientManageProcessor的processRequest中处理的
+                // ，对于UNREGISTER_CLIENT请求是调用unregisterClient方法处理的，里面又调用了ConsumerManager的unregisterConsumer方法进行取消注册
                 return this.unregisterClient(ctx, request);
             case RequestCode.CHECK_CLIENT_CONFIG:
                 return this.checkClientConfig(ctx, request);
@@ -72,6 +76,13 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
         return false;
     }
 
+    /**
+     * 心跳请求处理
+     *
+     * @param ctx
+     * @param request
+     * @return
+     */
     public RemotingCommand heartBeat(ChannelHandlerContext ctx, RemotingCommand request) {
         RemotingCommand response = RemotingCommand.createResponseCommand(null);
         HeartbeatData heartbeatData = HeartbeatData.decode(request.getBody(), HeartbeatData.class);
@@ -100,6 +111,7 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
                     PermName.PERM_WRITE | PermName.PERM_READ, topicSysFlag);
             }
 
+            // 注册Consumer
             boolean changed = this.brokerController.getConsumerManager().registerConsumer(
                 data.getGroupName(),
                 clientChannelInfo,
@@ -156,6 +168,7 @@ public class ClientManageProcessor extends AsyncNettyRequestProcessor implements
                 if (null != subscriptionGroupConfig) {
                     isNotifyConsumerIdsChangedEnable = subscriptionGroupConfig.isNotifyConsumerIdsChangedEnable();
                 }
+                // 取消消费者的注册
                 this.brokerController.getConsumerManager().unregisterConsumer(group, clientChannelInfo, isNotifyConsumerIdsChangedEnable);
             }
         }

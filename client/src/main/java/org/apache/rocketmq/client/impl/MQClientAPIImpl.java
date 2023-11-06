@@ -1043,14 +1043,27 @@ public class MQClientAPIImpl {
         this.remotingClient.invokeOneway(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr), request, timeoutMillis);
     }
 
+    /**
+     * sendHearbeat方法中，可以看到构建了HEART_BEAT请求，然后向Broker发送。
+     *
+     * @param addr
+     * @param heartbeatData
+     * @param timeoutMillis
+     * @return
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public int sendHearbeat(
         final String addr,
         final HeartbeatData heartbeatData,
         final long timeoutMillis
     ) throws RemotingException, MQBrokerException, InterruptedException {
+        // 创建HEART_BEAT请求
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
         request.setLanguage(clientConfig.getLanguage());
         request.setBody(heartbeatData.encode());
+        // 发送请求 ，Broker 处理请求的处理器：ClientManageProcessor
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
         assert response != null;
         switch (response.getCode()) {
@@ -1064,6 +1077,17 @@ public class MQClientAPIImpl {
         throw new MQBrokerException(response.getCode(), response.getRemark(), addr);
     }
 
+    /**
+     * 取消注册请求的发送是在MQClientAPIImpl中unregisterClient方法实现的，可以看到构建了UNREGISTER_CLIENT请求并发送
+     * @param addr
+     * @param clientID
+     * @param producerGroup
+     * @param consumerGroup
+     * @param timeoutMillis
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public void unregisterClient(
         final String addr,
         final String clientID,
@@ -1075,8 +1099,10 @@ public class MQClientAPIImpl {
         requestHeader.setClientID(clientID);
         requestHeader.setProducerGroup(producerGroup);
         requestHeader.setConsumerGroup(consumerGroup);
+        // 构建UNREGISTER_CLIENT请求
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UNREGISTER_CLIENT, requestHeader);
 
+        // 发送请求
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
         assert response != null;
         switch (response.getCode()) {

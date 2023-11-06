@@ -37,8 +37,10 @@ public class RebalanceService extends ServiceThread {
     }
 
     /**
-     * 在RebalanceService的run方法中，调用了waitForRunning方法进行阻塞等待，如果负责均衡服务被唤醒，
+     * 1. 在RebalanceService的run方法中，调用了waitForRunning方法进行阻塞等待，如果负责均衡服务被唤醒，
      * 将会调用MQClientInstance的doRebalance进行负载均衡.
+     *
+     * 2. 消费者定时触发： 在RebalanceService的run方法中，可以看到设置了等待时间，默认是20s，所以消费者本身也会定时执行负载均衡
      */
     @Override
     public void run() {

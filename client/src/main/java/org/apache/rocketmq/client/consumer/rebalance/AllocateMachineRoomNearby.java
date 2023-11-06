@@ -27,6 +27,7 @@ import org.apache.rocketmq.common.message.MessageQueue;
 import org.apache.rocketmq.logging.InternalLogger;
 
 /**
+ * 优先分配同机房
  * An allocate strategy proxy for based on machine room nearside priority. An actual allocate strategy can be
  * specified.
  *

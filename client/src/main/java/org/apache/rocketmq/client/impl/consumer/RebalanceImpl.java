@@ -289,11 +289,12 @@ public abstract class RebalanceImpl {
     }
 
     /**
-     * 负载均衡实际处理方法,根据主题进行负载均衡
+     *
+     * 根据主题进行负载均衡，负载均衡实际处理方法：
      * 1. rebalanceByTopic方法中根据消费模式进行了判断然后对主题进行负载均衡，这里我们关注集群模式下的负载均衡：
-     *  a. 从topicSubscribeInfoTable中根据主题获取对应的消息队列集合
-     *  b. 根据主题信息和消费者组名称，获取所有订阅了该主题的消费者ID集合
-     *  c. 如果主题对应的消息队列集合和消费者ID都不为空，对消息队列集合和消费ID集合进行排序
+     *  a. 从topicSubscribeInfoTable中根据主题获取对应的消息队列集合，这一步可以得到主题下的所有消息队列信息
+     *  b. 根据主题信息和消费者组名称，获取所有订阅了该主题的消费者ID集合，这一步得到了订阅该主题的所有消费者
+     *  c. 如果主题对应的消息队列集合和消费者ID都不为空，对消息队列集合和消费ID集合进行排序，排序是为了接下来进行分配
      *  d. 获取分配策略，根据分配策略，为当前的消费者分配对应的消费队列，RocketMQ默认提供了以下几种分配策略：
      *      1. AllocateMessageQueueAveragely：平均分配策略，根据消息队列的数量和消费者的个数计算每个消费者分配的队列个数。
      *      2. AllocateMessageQueueAveragelyByCircle：平均轮询分配策略，将消息队列逐个分发给每个消费者。
@@ -408,13 +409,13 @@ public abstract class RebalanceImpl {
     }
 
     /**
-     * 负载均衡 更新处理队列表
+     * 负载均衡 更新处理队列表：
      * 1. RebalanceImpl中使用了一个ConcurrentMap类型的处理队列表存储消息队列及对应的队列处理信息，updateProcessQueueTableInRebalance
      * 方法的入参中topic表示当前要进行负载均衡的主题，mqSet中记录了重新分配给当前消费者的消息队列，主要处理逻辑如下：
      *  a. 获取处理队列表processQueueTable进行遍历，处理每一个消息队列，如果队列表为空直接进入第2步：
      *      1. 判断消息队列所属的主题是否与方法中指定的主题一致，如果不一致继续遍历下一个消息队列;
-     *         如果主题一致，判断mqSet中是否包含当前正在遍历的队列，如果不包含，说明此队列已经不再分配给当前的消费者进行消费，需要将消息队列置为dropped，表示删除
-     *  b. 创建消息拉取请求集合pullRequestList，并遍历本次分配的消息队列集合，如果某个消息队列不在processQueueTable中，需要进行如下处理：
+     *         如果主题一致，判断mqSet中是否包含当前正在遍历的队列，如果不包含，说明此队列已经不再分配给当前的消费者进行消费，需要将消息队列置为dropped，表示删除，之后消费者不再从此消费队列中拉取消息
+     *  b. 创建消息拉取请求集合pullRequestList，并遍历本次分配的消息队列集合(mqSet)，如果某个消息队列不在processQueueTable中，需要进行如下处理：
      *      1. 计算消息拉取偏移量，如果消息拉取偏移量大于0，创建ProcessQueue，并放入处理队列表中processQueueTable
      *      2. 构建PullRequest，设置消息的拉取信息，并加入到拉取消息请求集合pullRequestList中
      *  c. 调用dispatchPullRequest处理拉取请求集合中的数据
