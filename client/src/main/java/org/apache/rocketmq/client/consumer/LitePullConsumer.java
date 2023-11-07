@@ -69,7 +69,9 @@ public interface LitePullConsumer {
     /**
      * Manually assign a list of message queues to this consumer. This interface does not allow for incremental
      * assignment and will replace the previous assignment (if there is one).
+     *手动将消息队列列表分配给此使用者。这个接口不允许增量赋值，并且将替换之前的赋值(如果有的话)。
      *
+     * 为consumer 分配消息队列
      * @param messageQueues Message queues that needs to be assigned.
      */
     void assign(Collection<MessageQueue> messageQueues);
@@ -94,7 +96,9 @@ public interface LitePullConsumer {
      * Overrides the fetch offsets that the consumer will use on the next poll. If this API is invoked for the same
      * message queue more than once, the latest offset will be used on the next poll(). Note that you may lose data if
      * this API is arbitrarily used in the middle of consumption.
-     *
+     * 覆盖消费者将在下一次轮询中使用的获取偏移量。如果为同一消息队列多次调用此API，则在下一个轮询()时将使用最新的偏移量。注意，如果在使用过程中任意使用此API
+     * ，可能会丢失数据。
+     *修改下次消息拉取的偏移量
      * @param messageQueue
      * @param offset
      */

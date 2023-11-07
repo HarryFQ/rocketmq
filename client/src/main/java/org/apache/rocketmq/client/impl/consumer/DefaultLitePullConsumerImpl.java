@@ -71,6 +71,10 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 
+/**
+ *
+ *
+ */
 public class DefaultLitePullConsumerImpl implements MQConsumerInner {
 
     private final InternalLogger log = ClientLogger.getLog();
@@ -89,6 +93,9 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
 
     private OffsetStore offsetStore;
 
+    /**
+     * 实例化，拉模式使用的是RebalanceLitePullImpl
+     */
     private RebalanceImpl rebalanceImpl = new RebalanceLitePullImpl(this);
 
     private enum SubscriptionType {
@@ -117,6 +124,9 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
 
     private DefaultLitePullConsumer defaultLitePullConsumer;
 
+    /**
+     * 拉取任务表
+     */
     private final ConcurrentMap<MessageQueue, PullTaskImpl> taskTable =
         new ConcurrentHashMap<MessageQueue, PullTaskImpl>();
 
@@ -178,17 +188,30 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         this.assignedMessageQueue.updateAssignedMessageQueue(topic, assignedMessageQueue);
     }
 
+    /**
+     * 更新拉取任务
+     * 在updatePullTask方法中，从拉取任务表taskTable中取出了所有的拉取任务进行遍历，taskTable中记录了之前分配的拉取任务，负载均衡之后可能发生变化
+     * ，所以需要对其进行更新，这一步主要是处理原先分配给当前消费者的消息队列，在负载均衡之后不再由当前消费者负责，所以需要从taskTable中删除，之后调用startPullTask启动拉取任务
+     *
+     * @param topic
+     * @param mqNewSet
+     */
     private void updatePullTask(String topic, Set<MessageQueue> mqNewSet) {
+        // 从拉取任务表中获取之前分配的消息队列进行遍历
         Iterator<Map.Entry<MessageQueue, PullTaskImpl>> it = this.taskTable.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<MessageQueue, PullTaskImpl> next = it.next();
+            // 如果与重新进行负载均衡的主题一致
             if (next.getKey().getTopic().equals(topic)) {
+                // 如果重新分配的消息队列集合中不包含此消息独立
                 if (!mqNewSet.contains(next.getKey())) {
                     next.getValue().setCancelled(true);
+                    // 从任务表移除
                     it.remove();
                 }
             }
         }
+        // 启动拉取任务
         startPullTask(mqNewSet);
     }
 
@@ -199,11 +222,11 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
             switch (messageModel) {
                 case BROADCASTING:
                     updateAssignedMessageQueue(topic, mqAll);
-                    updatePullTask(topic, mqAll);
+                    updatePullTask(topic, mqAll);// 更新拉取任务
                     break;
                 case CLUSTERING:
                     updateAssignedMessageQueue(topic, mqDivided);
-                    updatePullTask(topic, mqDivided);
+                    updatePullTask(topic, mqDivided);// 更新拉取任务
                     break;
                 default:
                     break;
@@ -233,6 +256,16 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         return this.serviceState == ServiceState.RUNNING;
     }
 
+    /**
+     * 1. DefaultLitePullConsumerImpl的start的方法主要做一些初始化的工作：
+     *  1. 初始化客户端实例对象mQClientFactory，对应实现类为MQClientInstance，拉取服务线程、负载均衡线程都是通过MQClientInstance启动的；
+     *  2. 初始化负载均衡类，拉模式对应的负载均衡类为RebalanceLitePullImpl；
+     *  3. 创建消息拉取API对象PullAPIWrapper，用于向Broker发送拉取消息的请求；
+     *  4. 初始化消息拉取偏移量；
+     *  5.启动一些定时任务；
+     *
+     * @throws MQClientException
+     */
     public synchronized void start() throws MQClientException {
         switch (this.serviceState) {
             case CREATE_JUST:
@@ -244,16 +277,22 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
                     this.defaultLitePullConsumer.changeInstanceNameToPID();
                 }
 
+                // 初始化MQClientInstance
                 initMQClientFactory();
 
+                // 初始化负载均衡
                 initRebalanceImpl();
 
+                // 初始化消息拉取API对象
                 initPullAPIWrapper();
 
+                // 初始化拉取偏移量
                 initOffsetStore();
 
+                // 启动MQClientInstance
                 mQClientFactory.start();
 
+                // 启动一些定时任务
                 startScheduleTask();
 
                 this.serviceState = ServiceState.RUNNING;
@@ -287,10 +326,19 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * 拉取模式对应的负载均衡类为RebalanceLitePullImpl（推模式使用的是RebalanceService）
+     * ，在initRebalanceImpl方法中设置了消费者组、消费模式、分配策略等信息.
+     *
+     */
     private void initRebalanceImpl() {
+        // 设置消费者组
         this.rebalanceImpl.setConsumerGroup(this.defaultLitePullConsumer.getConsumerGroup());
+        // 设置消费模式
         this.rebalanceImpl.setMessageModel(this.defaultLitePullConsumer.getMessageModel());
+        // 设置分配策略
         this.rebalanceImpl.setAllocateMessageQueueStrategy(this.defaultLitePullConsumer.getAllocateMessageQueueStrategy());
+        // 设置mQClientFactory
         this.rebalanceImpl.setmQClientFactory(this.mQClientFactory);
     }
 
@@ -393,11 +441,23 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         return pullAPIWrapper;
     }
 
+    /**
+     * 提交拉取任务
+     * startPullTask方法入参中传入的是负载均衡后重新分配的消息队列集合，在startPullTask中会对重新分配的集合进行遍历，如果taskTable中不包含某个消息队列
+     * ，就构建PullTaskImpl对象，加入taskTable，这一步主要是处理负载均衡后新增的消息队列，为其构建PullTaskImpl加入到taskTable，之后将拉取消息的任务PullTaskImpl提交到线程池周期性的执行
+     *
+     *  @param mqSet
+     */
     private void startPullTask(Collection<MessageQueue> mqSet) {
+        // 遍历最新分配的消息队列集合
         for (MessageQueue messageQueue : mqSet) {
+            // 如果任务表中不包含
             if (!this.taskTable.containsKey(messageQueue)) {
+                // 创建拉取任务  PullTaskImpl继承了Runnable
                 PullTaskImpl pullTask = new PullTaskImpl(messageQueue);
+                // 加入到任务表
                 this.taskTable.put(messageQueue, pullTask);
+                // 将任务提交到线程池定时执行
                 this.scheduledThreadPoolExecutor.schedule(pullTask, 0, TimeUnit.MILLISECONDS);
             }
         }
@@ -495,6 +555,13 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * 消息消费
+     *可以看到消费者是调用poll方法获取数据的，进入到poll方法中，可以看到是从consumeRequestCache中获取消费请求的，然后从中解析出消息内容返回
+     *
+     * @param timeout
+     * @return
+     */
     public synchronized List<MessageExt> poll(long timeout) {
         try {
             checkServiceState();
@@ -506,6 +573,7 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
             }
             long endTime = System.currentTimeMillis() + timeout;
 
+            // 从consumeRequestCache中获取数据进行处理
             ConsumeRequest consumeRequest = consumeRequestCache.poll(endTime - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
 
             if (endTime - System.currentTimeMillis() > 0) {
@@ -517,11 +585,13 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
             }
 
             if (consumeRequest != null && !consumeRequest.getProcessQueue().isDropped()) {
+                // 获取消息内容
                 List<MessageExt> messages = consumeRequest.getMessageExts();
                 long offset = consumeRequest.getProcessQueue().removeMessage(messages);
                 assignedMessageQueue.updateConsumeOffset(consumeRequest.getMessageQueue(), offset);
                 //If namespace not null , reset Topic without namespace.
                 this.resetTopic(messages);
+                // 返回消息内容
                 return messages;
             }
         } catch (InterruptedException ignore) {
@@ -619,8 +689,13 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * 在submitConsumeRequest方法中可以看到将创建的ConsumeRequest对象放入了阻塞队列consumeRequestCache中
+     * @param consumeRequest
+     */
     private void submitConsumeRequest(ConsumeRequest consumeRequest) {
         try {
+            // 放入阻塞队列consumeRequestCache中
             consumeRequestCache.put(consumeRequest);
         } catch (InterruptedException e) {
             log.error("Submit consumeRequest error", e);
@@ -653,12 +728,31 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     *
+     * 计算本次消息拉取的点位：
+     * 默认值是-1：
+     * 流程：
+     *  1. 获取对应消息队列的seekOffset,默认值是-1；
+     *  2.判断seekOff是否被修改
+     *      1. 不为-1，seekOffset就是消息拉取的偏移量.然后使用改值更新其consumerOffset,
+     *      2. 为-1 ， 从assignedMessageQueue 获取 pullOffset 的值，如果pullOffset 的值为-1 ，使用 fetchConsumeOffset方法获取点位，否则返回pullOffset.
+     *
+     *
+     * @param messageQueue
+     * @return
+     */
     private long nextPullOffset(MessageQueue messageQueue) {
         long offset = -1;
+        // 获取对应消息队列的seekOffset,默认值是-1；
         long seekOffset = assignedMessageQueue.getSeekOffset(messageQueue);
+        // 判断seekOff是否被修改
         if (seekOffset != -1) {
+            //seekOffset就是消息拉取的偏移量.
             offset = seekOffset;
+            //使用改值更新其consumerOffset
             assignedMessageQueue.updateConsumeOffset(messageQueue, offset);
+            // 修改seekOffset为-1
             assignedMessageQueue.setSeekOffset(messageQueue, -1);
         } else {
             offset = assignedMessageQueue.getPullOffset(messageQueue);
@@ -674,6 +768,13 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         return this.mQClientFactory.getMQAdminImpl().searchOffset(mq, timestamp);
     }
 
+    /**
+     * PullTaskImpl继承了Runnable，在run方法中的处理逻辑如下：
+     *  1. 获取消息队列对应处理队列ProcessQueue；
+     *  2. 获取消息拉取偏移量，也就是从何处开始拉取消息；
+     *  3. 调用pull方法进行消息拉取；
+     *  4. 判断拉取结果，如果拉取到了消息，将拉取到的结果封装为ConsumeRequest进行提交，也就是放到了阻塞队列中，后续消费者从队列中获取数据进行消费；
+     */
     public class PullTaskImpl implements Runnable {
         private final MessageQueue messageQueue;
         private volatile boolean cancelled = false;
@@ -685,21 +786,26 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
         @Override
         public void run() {
 
+            // 如果未取消
             if (!this.isCancelled()) {
 
+                // 判断该消息队列是否被设置为暂停消费，如果设置为暂停消费，则让拉取任务延迟1秒在执行
                 if (assignedMessageQueue.isPaused(messageQueue)) {
                     scheduledThreadPoolExecutor.schedule(this, PULL_TIME_DELAY_MILLS_WHEN_PAUSE, TimeUnit.MILLISECONDS);
                     log.debug("Message Queue: {} has been paused!", messageQueue);
                     return;
                 }
 
+                // 获取消息队列对应的ProcessQueue
                 ProcessQueue processQueue = assignedMessageQueue.getProcessQueue(messageQueue);
 
                 if (null == processQueue || processQueue.isDropped()) {
+                    // 当前的队列已经不在被consumer消费
                     log.info("The message queue not be able to poll, because it's dropped. group={}, messageQueue={}", defaultLitePullConsumer.getConsumerGroup(), this.messageQueue);
                     return;
                 }
 
+                // 流控 缓存的*批量拉取数量(10) 大于10000就会触发流控
                 if (consumeRequestCache.size() * defaultLitePullConsumer.getPullBatchSize() > defaultLitePullConsumer.getPullThresholdForAll()) {
                     scheduledThreadPoolExecutor.schedule(this, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL, TimeUnit.MILLISECONDS);
                     if ((consumeRequestFlowControlTimes++ % 1000) == 0)
@@ -710,6 +816,7 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
                 long cachedMessageCount = processQueue.getMsgCount().get();
                 long cachedMessageSizeInMiB = processQueue.getMsgSize().get() / (1024 * 1024);
 
+                // 流控，处理队列的数量大于1000 就会触发流控
                 if (cachedMessageCount > defaultLitePullConsumer.getPullThresholdForQueue()) {
                     scheduledThreadPoolExecutor.schedule(this, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL, TimeUnit.MILLISECONDS);
                     if ((queueFlowControlTimes++ % 1000) == 0) {
@@ -720,6 +827,7 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
                     return;
                 }
 
+                // 流控，大于100 mb就会触发流控
                 if (cachedMessageSizeInMiB > defaultLitePullConsumer.getPullThresholdSizeForQueue()) {
                     scheduledThreadPoolExecutor.schedule(this, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL, TimeUnit.MILLISECONDS);
                     if ((queueFlowControlTimes++ % 1000) == 0) {
@@ -730,6 +838,7 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
                     return;
                 }
 
+                // 流控，处理队列与消费者的跨度超过2000 就会触发流控
                 if (processQueue.getMaxSpan() > defaultLitePullConsumer.getConsumeMaxSpan()) {
                     scheduledThreadPoolExecutor.schedule(this, PULL_TIME_DELAY_MILLS_WHEN_FLOW_CONTROL, TimeUnit.MILLISECONDS);
                     if ((queueMaxSpanFlowControlTimes++ % 1000) == 0) {
@@ -739,28 +848,34 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
                     }
                     return;
                 }
-
+                // 上面是一系列校验
+                // 获取拉取偏移量
                 long offset = nextPullOffset(messageQueue);
                 long pullDelayTimeMills = 0;
                 try {
                     SubscriptionData subscriptionData;
                     if (subscriptionType == SubscriptionType.SUBSCRIBE) {
+                        // 获取主题
                         String topic = this.messageQueue.getTopic();
+                        // 获取主题对应的订阅信息SubscriptionData
                         subscriptionData = rebalanceImpl.getSubscriptionInner().get(topic);
                     } else {
+                        // 获取主题
                         String topic = this.messageQueue.getTopic();
                         subscriptionData = FilterAPI.buildSubscriptionData(defaultLitePullConsumer.getConsumerGroup(),
                             topic, SubscriptionData.SUB_ALL);
                     }
-                    
+                    // 拉取消息
                     PullResult pullResult = pull(messageQueue, subscriptionData, offset, defaultLitePullConsumer.getPullBatchSize());
 
+                    // 判断拉取结果
                     switch (pullResult.getPullStatus()) {
-                        case FOUND:
+                        case FOUND:// 如果获取到了数据
                             final Object objLock = messageQueueLock.fetchLockObject(messageQueue);
-                            synchronized (objLock) {
+                            synchronized (objLock) {// 加锁
                                 if (pullResult.getMsgFoundList() != null && !pullResult.getMsgFoundList().isEmpty() && assignedMessageQueue.getSeekOffset(messageQueue) == -1) {
                                     processQueue.putMessage(pullResult.getMsgFoundList());
+                                    // 将拉取结果封装为ConsumeRequest，提交消费请求
                                     submitConsumeRequest(new ConsumeRequest(pullResult.getMsgFoundList(), messageQueue, processQueue));
                                 }
                             }

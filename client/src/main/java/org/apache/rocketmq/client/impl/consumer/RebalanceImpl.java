@@ -383,6 +383,7 @@ public abstract class RebalanceImpl {
                             "rebalanced result changed. allocateMessageQueueStrategyName={}, group={}, topic={}, clientId={}, mqAllSize={}, cidAllSize={}, rebalanceResultSize={}, rebalanceResultSet={}",
                             strategy.getName(), consumerGroup, topic, this.mQClientFactory.getClientId(), mqSet.size(), cidAll.size(),
                             allocateResultSet.size(), allocateResultSet);
+                        //触发变更事件  负载均衡之后如果消费者负载的ProcessQueue发生了变化，会调用messageQueueChanged方法触发变更事件：
                         this.messageQueueChanged(topic, mqSet, allocateResultSet);
                     }
                 }
@@ -535,6 +536,12 @@ public abstract class RebalanceImpl {
         return changed;
     }
 
+    /**
+     * 触发消息队列变更事件
+     * @param topic
+     * @param mqAll
+     * @param mqDivided
+     */
     public abstract void messageQueueChanged(final String topic, final Set<MessageQueue> mqAll,
         final Set<MessageQueue> mqDivided);
 

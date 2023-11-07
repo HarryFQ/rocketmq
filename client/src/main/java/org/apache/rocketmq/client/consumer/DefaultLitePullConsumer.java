@@ -32,8 +32,27 @@ import org.apache.rocketmq.common.protocol.NamespaceUtil;
 import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
 import org.apache.rocketmq.remoting.RPCHook;
 
+/**
+ * 1. 推模式与拉模式的区别
+ *  a. 对比上面推模式进行消费的例子，从使用方式上来讲，推模式不需要消费者主动去拉取消息，只需要注册消息监听器，当有消息到达时，触发consumeMessage方法进行消息消费
+ *      ，从表面上看就像是Broker主动推送给消费者一样，所以叫做推模式，尽管底层还是需要消费者发起拉取请求向Broker拉取消息。
+ *  b. 拉模式在使用方式上，需要消费者主动调用poll方法获取消息，从表面上看消费者需要不断主动进行消息拉取，所以叫做拉模式。
+ *
+ * 1. 使用DefaultMQPullConsumer 应考虑以下两个问题：（https://blog.csdn.net/qq_25145759/article/details/114299339）
+ *  1.消息队列的负载均衡
+ *  2. 消费点位及存储；
+ * 2.DefaultLitePullConsumer 实现提供以下特性：
+ *  1. 集群方式消费消息支持消息对列负载均衡；
+ *  2. 广播方式消费消息支持收到广播消息对列，此时不支持负载均衡；
+ *  3. 提供了seek 方法方便用户重置消费点位；
+ *  4. 提供commitSync 方法方便用户手动提交消费点位。
+ *
+ */
 public class DefaultLitePullConsumer extends ClientConfig implements LitePullConsumer {
 
+    /**
+     * 拉模式下默认的消息拉取实现类
+     */
     private final DefaultLitePullConsumerImpl defaultLitePullConsumerImpl;
 
     /**
@@ -117,17 +136,20 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
 
     /**
      * Consume max span offset.
+     * 消耗最大跨度偏移量。
      */
     private int consumeMaxSpan = 2000;
 
     /**
      * Flow control threshold on queue level, each message queue will cache at most 1000 messages by default, Consider
+     * 队列级别上的流量控制阈值，默认情况下每个消息队列最多缓存1000条消息，请考虑
      * the {@code pullBatchSize}, the instantaneous value may exceed the limit
      */
     private int pullThresholdForQueue = 1000;
 
     /**
      * Limit the cached message size on queue level, each message queue will cache at most 100 MiB messages by default,
+     * 在队列级别限制缓存的消息大小，默认情况下每个消息队列最多缓存100 MiB消息。
      * Consider the {@code pullBatchSize}, the instantaneous value may exceed the limit
      *
      * <p>
@@ -197,12 +219,14 @@ public class DefaultLitePullConsumer extends ClientConfig implements LitePullCon
     public DefaultLitePullConsumer(final String namespace, final String consumerGroup, RPCHook rpcHook) {
         this.namespace = namespace;
         this.consumerGroup = consumerGroup;
+        // 创建DefaultLitePullConsumerImpl
         defaultLitePullConsumerImpl = new DefaultLitePullConsumerImpl(this, rpcHook);
     }
 
     @Override
     public void start() throws MQClientException {
         setConsumerGroup(NamespaceUtil.wrapNamespace(this.getNamespace(), this.consumerGroup));
+        // 启动DefaultLitePullConsumerImpl
         this.defaultLitePullConsumerImpl.start();
     }
 

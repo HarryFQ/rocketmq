@@ -50,6 +50,8 @@ public class RebalanceLitePullImpl extends RebalanceImpl {
         MessageQueueListener messageQueueListener = this.litePullConsumerImpl.getDefaultLitePullConsumer().getMessageQueueListener();
         if (messageQueueListener != null) {
             try {
+                // RebalanceLitePullImpl的messageQueueChanged方法中又调用了MessageQueueListener的messageQueueChanged方法触发消息队列改变事件
+                // 触发改变事件
                 messageQueueListener.messageQueueChanged(topic, mqAll, mqDivided);
             } catch (Throwable e) {
                 log.error("messageQueueChanged exception", e);
