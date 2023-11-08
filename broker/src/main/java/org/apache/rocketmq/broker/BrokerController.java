@@ -249,7 +249,9 @@ public class BrokerController {
                         this.brokerConfig);
                 //如果启用了Dledger，他就初始化一堆Dledger相关的组件
                 if (messageStoreConfig.isEnableDLegerCommitLog()) {
+                    // 创建DLedgerRoleChangeHandler
                     DLedgerRoleChangeHandler roleChangeHandler = new DLedgerRoleChangeHandler(this, (DefaultMessageStore) messageStore);
+                    // 获取CommitLog并转为DLedgerCommitLog类型，并添加角色变更处理器DLedgerRoleChangeHandler
                     ((DLedgerCommitLog)((DefaultMessageStore) messageStore).getCommitLog()).getdLedgerServer().getdLedgerLeaderElector().addRoleChangeHandler(roleChangeHandler);
                 }
                 // 创建broker 状态

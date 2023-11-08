@@ -136,7 +136,9 @@ public class DefaultMessageStore implements MessageStore {
         this.allocateMappedFileService = new AllocateMappedFileService(this);
         //如果启用了Dleger
         if (messageStoreConfig.isEnableDLegerCommitLog()) {
+            // 在DefaultMessageStore构造函数中可以看到，如果开启了DLedger，使用的是DLedgerCommitLog，所以上面可以将CommitLog转换为DLedgerCommitLog
             // 使用DLedgerCommitLog
+            // 创建DLedgerCommitLog类型的CommitLog
             this.commitLog = new DLedgerCommitLog(this);
         } else {
             // 否则使用CommitLog

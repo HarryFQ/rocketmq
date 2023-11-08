@@ -60,6 +60,9 @@ import org.apache.rocketmq.store.schedule.ScheduleMessageService;
 
 /**
  * Store all metadata downtime for recovery, data protection reliability
+ *
+ *
+ * 进入到DLedgerCommitLog，可以看到它引用了DLedgerServer，并在start方法中对其进行了启动，而在DLedgerServer中又启动了DLedgerLeaderElector进行Leader选举
  */
 public class DLedgerCommitLog extends CommitLog {
     private final DLedgerServer dLedgerServer;
@@ -127,6 +130,15 @@ public class DLedgerCommitLog extends CommitLog {
 
     @Override
     public void start() {
+        // 1. 启动DLedgerServer，在DLedgerServer中又启动了DLedgerLeaderElector(DLedgerLeaderElector.startup)进行Leader选举
+        // 2. 在DLedgerLeaderElector中，引用了StateMaintainer，并在startup方法中启动了StateMaintainer，然后遍历RoleChangeHandler，调用其startup进行启动
+        // 3. StateMaintainer是DLedgerLeaderElector的内部类，继承了ShutdownAbleThread，所以这里其实是开启了一个线程会不断执行doWork方法，在doWork方法(.DLedgerLeaderElector.StateMaintainer.doWork)中调用了maintainState方法维护状态
+        // 4. 在maintainState方法中，可以看到对节点的角色进行了判断：
+        //    a. 如果当前节点是Leader，调用maintainAsLeader方法处理；
+        //    b. 如果当前节点是Follower，调用maintainAsFollower方法处理；
+        //    c. 如果当前节点是Candidate，调用maintainAsCandidate方法处理；
+        // 5. MemberState中可以看到role的值默认为CANDIDATE，所以初始状态下，各个节点的角色为CANDIDATE，接下来进入到maintainAsCandidate方法看下如何发起选举：
+
         dLedgerServer.startup();
     }
 
