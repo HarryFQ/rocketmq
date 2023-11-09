@@ -43,19 +43,37 @@ import org.apache.rocketmq.srvutil.FileWatchService;
 public class NamesrvController {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
 
+    /**
+     * NameServer相关配置
+     */
     private final NamesrvConfig namesrvConfig;
 
+    /**
+     * Netty服务相关配置
+     */
     private final NettyServerConfig nettyServerConfig;
 
+    /**
+     * 定时执行任务的线程池
+     */
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
             "NSScheduledThread"));
+    /**
+     *  路由表
+     */
     private final KVConfigManager kvConfigManager;
     private final RouteInfoManager routeInfoManager;
 
+    /**
+     * 远程服务，使用的是NettyRemotingServer
+     */
     private RemotingServer remotingServer;
 
     private BrokerHousekeepingService brokerHousekeepingService;
 
+    /**
+     * Netty服务相关线程池
+     */
     private ExecutorService remotingExecutor;
 
     private Configuration configuration;
@@ -74,14 +92,28 @@ public class NamesrvController {
         this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
     }
 
+    /**
+     * 初始化
+     *1. NamesrvController的初始化方法中主要做了如下操作：
+     *      1. 加载配置信息，主要是从kvConfig.json中加载数据
+     *      2. 创建NettyRemotingServer，用于网络通信
+     *      3. 根据设置的工作线程数量创建netty服务相关线程池
+     *      4. 注册处理器DefaultRequestProcessor，用于处理收到的请求，比如Broker发起的注册请求
+     *      5. 注册用于心跳检测的定时任务，定时扫描处于不活跃状态的Broker并剔除
+     *      6注册定时打印KV信息的任务
+     * 
+     * 
+     * @return
+     */
     public boolean initialize() {
         // 加载KV 配置
         this.kvConfigManager.load();
-        // 创建服务端对象
+        // 创建NettyRemotingServer
         this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
-        // 创建服务端线城池
+        // 创建netty服务相关线程池
         this.remotingExecutor = Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(), new ThreadFactoryImpl("RemotingExecutorThread_"));
         // 注册线程池, 接受客服端，并进行处理
+        // 注册处理器
         this.registerProcessor();
         /** 定时任务： 每个10 扫描不是活跃的broker
          * 定时扫描这个map {@link RouteInfoManager#brokerLiveTable}
@@ -90,6 +122,7 @@ public class NamesrvController {
 
             @Override
             public void run() {
+                // 心跳监测扫描处于不活跃状态的Broker
                 NamesrvController.this.routeInfoManager.scanNotActiveBroker();
             }
         }, 5, 10, TimeUnit.SECONDS);
@@ -98,6 +131,7 @@ public class NamesrvController {
 
             @Override
             public void run() {
+                // 定时打印KV配置信息
                 NamesrvController.this.kvConfigManager.printAllPeriodically();
             }
         }, 1, 10, TimeUnit.MINUTES);
@@ -152,10 +186,17 @@ public class NamesrvController {
                     this.remotingExecutor);
         } else {
 
+            // 注册默认请求处理器（DefaultRequestProcessor）处理请求
             this.remotingServer.registerDefaultProcessor(new DefaultRequestProcessor(this), this.remotingExecutor);
         }
     }
 
+    /**
+     * 启动
+     * 在启动方法中，主要是调用了RemotingServer的start方法启动服务，在NamesrvController的初始化方法中可知，使用的实现类是NettyRemotingServer
+     * ，所以之后会启动Netty服务
+     * @throws Exception
+     */
     public void start() throws Exception {
         this.remotingServer.start();
 
