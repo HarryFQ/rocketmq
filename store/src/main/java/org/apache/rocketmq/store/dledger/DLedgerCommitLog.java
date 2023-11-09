@@ -650,6 +650,15 @@ public class DLedgerCommitLog extends CommitLog {
         return putMessageResult;
     }
 
+    /**
+     * 1. Broker收到消息后会调用CommitLog的asyncPutMessage方法写入消息，在DLedger模式下使用的是DLedgerCommitLog，进入asyncPutMessages方法，主要处理逻辑如下：
+     *  1. 调用serialize方法将消息数据序列化；
+     *  2. 构建批量消息追加请求BatchAppendEntryRequest，并设置上一步序列化的消息数据；
+     *  3. 调用handleAppend方法提交消息追加请求，进行消息写入
+     *
+     * @param msg
+     * @return
+     */
     @Override
     public CompletableFuture<PutMessageResult> asyncPutMessage(MessageExtBrokerInner msg) {
 
@@ -666,6 +675,7 @@ public class DLedgerCommitLog extends CommitLog {
         AppendFuture<AppendEntryResponse> dledgerFuture;
         EncodeResult encodeResult;
 
+        // 将消息数据序列化
         encodeResult = this.messageSerializer.serialize(msg);
         if (encodeResult.status != AppendMessageStatus.PUT_OK) {
             return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, new AppendMessageResult(encodeResult.status)));
@@ -747,6 +757,15 @@ public class DLedgerCommitLog extends CommitLog {
         });
     }
 
+    /**
+     * 1. Broker收到消息后会调用CommitLog的asyncPutMessage方法写入消息，在DLedger模式下使用的是DLedgerCommitLog，进入asyncPutMessages方法，主要处理逻辑如下：
+     *  1. 调用serialize方法将消息数据序列化；
+     *  2. 构建批量消息追加请求BatchAppendEntryRequest，并设置上一步序列化的消息数据；
+     *  3. 调用handleAppend方法提交消息追加请求，进行消息写入
+     *
+     * @param messageExtBatch
+     * @return
+     */
     @Override
     public CompletableFuture<PutMessageResult> asyncPutMessages(MessageExtBatch messageExtBatch) {
         final int tranType = MessageSysFlag.getTransactionValue(messageExtBatch.getSysFlag());
@@ -778,6 +797,7 @@ public class DLedgerCommitLog extends CommitLog {
         BatchAppendFuture<AppendEntryResponse> dledgerFuture;
         EncodeResult encodeResult;
 
+        // 将消息数据序列化
         encodeResult = this.messageSerializer.serialize(messageExtBatch);
         if (encodeResult.status != AppendMessageStatus.PUT_OK) {
             return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, new AppendMessageResult(encodeResult
@@ -792,10 +812,23 @@ public class DLedgerCommitLog extends CommitLog {
         try {
             beginTimeInDledgerLock = this.defaultMessageStore.getSystemClock().now();
             queueOffset = topicQueueTable.get(encodeResult.queueOffsetKey);
+            // 创建批量追加消息请求
             BatchAppendEntryRequest request = new BatchAppendEntryRequest();
+            // 设置group
             request.setGroup(dLedgerConfig.getGroup());
             request.setRemoteId(dLedgerServer.getMemberState().getSelfId());
+            // 从EncodeResult中获取序列化的消息数据
             request.setBatchMsgs(encodeResult.batchData);
+            // 调用handleAppend将数据写入存储层
+            // 将消息数据序列化之后，封装了消息追加请求，调用handleAppend方法写入消息，处理逻辑如下
+            /***
+             * 1. 将消息数据序列化之后，封装了消息追加请求，调用handleAppend方法写入消息，处理逻辑如下:
+             *      1. 获取当前的Term，判断当前Term对应的写入请求数量是否超过了最大值，如果未超过进入下一步，如果超过，设置响应状态为LEADER_PENDING_FULL表示处理的消息追加请求数量过多，拒绝处理当前请求；
+             *      2. 校验是否是批量请求：
+             *          1. 如果是：遍历每一个消息，为消息创建DLedgerEntry对象，调用appendAsLeader将消息写入到Leader节点， 并调用waitAck为最后最后一条消息创建异步响应对象；
+             *          2. 如果不是：直接为消息创建DLedgerEntry对象，调用appendAsLeader将消息写入到Leader节点并调用waitAck创建异步响应对象；
+             */
+
             dledgerFuture = (BatchAppendFuture<AppendEntryResponse>) dLedgerServer.handleAppend(request);
             if (dledgerFuture.getPos() == -1) {
                 log.warn("HandleAppend return false due to error code {}", dledgerFuture.get().getCode());
@@ -1090,11 +1123,32 @@ public class DLedgerCommitLog extends CommitLog {
             return new EncodeResult(AppendMessageStatus.PUT_OK, msgStoreItemMemory, key);
         }
 
+        /**
+         * 1. 在serialize方法中，主要是将消息数据序列化到内存buffer，由于消息可能有多条，所以开启循环读取每一条数据进行序列化：
+         *      1. 读取总数据大小、魔数和CRC校验和，这三步是为了让buffer的读取指针向后移动；
+         *      2. 读取FLAG，记在flag变量；
+         *      3. 读取消息长度，记在bodyLen变量；
+         *      4. 接下来是消息内容开始位置，将开始位置记录在bodyPos变量；
+         *      5. 从消息内容开始位置，读取消息内容计算CRC校验和；
+         *      6. 更改buffer读取指针位置，将指针从bodyPos开始移动bodyLen个位置，也就是跳过消息内容，继续读取下一个数据；
+         *      7. 读取消息属性长度，记录消息属性开始位置；
+         *      8. 获取主题信息并计算数据的长度；
+         *      9. 计算消息长度，并根据消息长度分配内存；
+         *      10. 校验消息长度是否超过限制；
+         *      11. 初始化内存空间，将消息的相关内容依次写入；
+         *      12. 返回序列化结果EncodeResult；
+         *
+         *
+         *
+         * @param messageExtBatch
+         * @return
+         */
         public EncodeResult serialize(final MessageExtBatch messageExtBatch) {
             keyBuilder.setLength(0);
             keyBuilder.append(messageExtBatch.getTopic());
             keyBuilder.append('-');
             keyBuilder.append(messageExtBatch.getQueueId());
+            // 设置Key：top+queueId
             String key = keyBuilder.toString();
 
             Long queueOffset = DLedgerCommitLog.this.topicQueueTable.get(key);
@@ -1104,42 +1158,62 @@ public class DLedgerCommitLog extends CommitLog {
             }
 
             int totalMsgLen = 0;
+            // 获取消息数据
             ByteBuffer messagesByteBuff = messageExtBatch.wrap();
             List<byte[]> batchBody = new LinkedList<>();
 
+            // 获取系统标识
             int sysFlag = messageExtBatch.getSysFlag();
             int bornHostLength = (sysFlag & MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;
             int storeHostLength = (sysFlag & MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;
+            // 分配内存
             ByteBuffer bornHostHolder = ByteBuffer.allocate(bornHostLength);
             ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);
 
+            // 是否有剩余数据未读取
             while (messagesByteBuff.hasRemaining()) {
                 // 1 TOTALSIZE
+                // 读取总大小
                 messagesByteBuff.getInt();
                 // 2 MAGICCODE
+                // 读取魔数
                 messagesByteBuff.getInt();
                 // 3 BODYCRC
+                // 读取CRC校验和
                 messagesByteBuff.getInt();
                 // 4 FLAG
+                // 读取FLAG
                 int flag = messagesByteBuff.getInt();
                 // 5 BODY
+                // 读取消息长度
                 int bodyLen = messagesByteBuff.getInt();
+                // 记录消息内容开始位置
                 int bodyPos = messagesByteBuff.position();
+                // 从消息内容开始位置，读取消息内容计算CRC校验和
                 int bodyCrc = UtilAll.crc32(messagesByteBuff.array(), bodyPos, bodyLen);
+                // 更改位置，将指针从bodyPos开始移动bodyLen个位置，也就是跳过消息内容，继续读取下一个数据
                 messagesByteBuff.position(bodyPos + bodyLen);
                 // 6 properties
+                // 读取消息属性长度
                 short propertiesLen = messagesByteBuff.getShort();
+                // 记录消息属性位置
                 int propertiesPos = messagesByteBuff.position();
+                // 更改位置，跳过消息属性
                 messagesByteBuff.position(propertiesPos + propertiesLen);
 
+                // 获取主题信息
                 final byte[] topicData = messageExtBatch.getTopic().getBytes(MessageDecoder.CHARSET_UTF8);
 
+                // 主题字节数组长度
                 final int topicLength = topicData.length;
 
+                // 计算消息长度
                 final int msgLen = calMsgLength(messageExtBatch.getSysFlag(), bodyLen, topicLength, propertiesLen);
+                // 根据消息长度分配内存
                 ByteBuffer msgStoreItemMemory = ByteBuffer.allocate(msgLen);
 
                 // Exceeds the maximum message
+                // 如果超过了最大消息大小
                 if (msgLen > this.maxMessageSize) {
                     CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " +
                             bodyLen
@@ -1147,36 +1221,50 @@ public class DLedgerCommitLog extends CommitLog {
                     throw new RuntimeException("message size exceeded");
                 }
 
+                // 更新总长度
                 totalMsgLen += msgLen;
                 // Determines whether there is sufficient free space
+                // 如果超过了最大消息大小
                 if (totalMsgLen > maxMessageSize) {
                     throw new RuntimeException("message size exceeded");
                 }
 
                 // Initialization of storage space
+                // 初始化内存空间
                 this.resetByteBuffer(msgStoreItemMemory, msgLen);
                 // 1 TOTALSIZE
+                // 1 写入长度
                 msgStoreItemMemory.putInt(msgLen);
                 // 2 MAGICCODE
+                // 2 写入魔数
                 msgStoreItemMemory.putInt(DLedgerCommitLog.MESSAGE_MAGIC_CODE);
                 // 3 BODYCRC
+                // 3 写入CRC校验和
                 msgStoreItemMemory.putInt(bodyCrc);
                 // 4 QUEUEID
+                // 4 写入QUEUEID
                 msgStoreItemMemory.putInt(messageExtBatch.getQueueId());
                 // 5 FLAG
+                // 5 写入FLAG
                 msgStoreItemMemory.putInt(flag);
                 // 6 QUEUEOFFSET
+                // 6 写入队列偏移量QUEUEOFFSET
                 msgStoreItemMemory.putLong(queueOffset++);
                 // 7 PHYSICALOFFSET
+                // 7 写入物理偏移量
                 msgStoreItemMemory.putLong(0);
                 // 8 SYSFLAG
+                // 8 写入系统标识SYSFLAG
                 msgStoreItemMemory.putInt(messageExtBatch.getSysFlag());
                 // 9 BORNTIMESTAMP
+                // 9 写入消息产生的时间戳
                 msgStoreItemMemory.putLong(messageExtBatch.getBornTimestamp());
+                // 10 BORNHOST
                 // 10 BORNHOST
                 resetByteBuffer(bornHostHolder, bornHostLength);
                 msgStoreItemMemory.put(messageExtBatch.getBornHostBytes(bornHostHolder));
                 // 11 STORETIMESTAMP
+                // 11 写入消息存储时间戳
                 msgStoreItemMemory.putLong(messageExtBatch.getStoreTimestamp());
                 // 12 STOREHOSTADDRESS
                 resetByteBuffer(storeHostHolder, storeHostLength);
@@ -1186,24 +1274,31 @@ public class DLedgerCommitLog extends CommitLog {
                 // 14 Prepared Transaction Offset
                 msgStoreItemMemory.putLong(0);
                 // 15 BODY
+                // 15 写入消息内容长度
                 msgStoreItemMemory.putInt(bodyLen);
                 if (bodyLen > 0) {
+                    // 写入消息内容
                     msgStoreItemMemory.put(messagesByteBuff.array(), bodyPos, bodyLen);
                 }
                 // 16 TOPIC
+                // 16 写入主题
                 msgStoreItemMemory.put((byte) topicLength);
                 msgStoreItemMemory.put(topicData);
                 // 17 PROPERTIES
+                // 17 写入属性长度
                 msgStoreItemMemory.putShort(propertiesLen);
                 if (propertiesLen > 0) {
                     msgStoreItemMemory.put(messagesByteBuff.array(), propertiesPos, propertiesLen);
                 }
+                // 创建字节数组
                 byte[] data = new byte[msgLen];
                 msgStoreItemMemory.clear();
                 msgStoreItemMemory.get(data);
+                // 加入到消息集合
                 batchBody.add(data);
             }
 
+            // 返回结果
             return new EncodeResult(AppendMessageStatus.PUT_OK, key, batchBody, totalMsgLen);
         }
 
