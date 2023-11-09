@@ -604,25 +604,33 @@ public class CommitLog {
 
         // 获取事务类型
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
-        // 事物消息
+        // 如果未使用事务或者提交事务
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
                 || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            // 判断延迟级别
             if (msg.getDelayTimeLevel() > 0) {
+                // 如果超过了最大延迟级别
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
+                    // 使用最大延迟级别
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
 
+                // 获取RMQ_SYS_SCHEDULE_TOPIC(SCHEDULE_TOPIC_XXXX)
                 topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;
+                // 根据延迟级别选取对应的队列
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
 
                 // Backup real topic, queueId
+                // 将消息原本的TOPIC和队列ID设置到消息属性中
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
                 msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
 
+                // 设置SCHEDULE_TOPIC
                 msg.setTopic(topic);
                 msg.setQueueId(queueId);
+                // 延迟消息被投递到延迟队列中之后，会由定时任务(ScheduleMessageService)去处理队列中的消息，接下来就去看下定时任务的处理过程。
             }
         }
 
