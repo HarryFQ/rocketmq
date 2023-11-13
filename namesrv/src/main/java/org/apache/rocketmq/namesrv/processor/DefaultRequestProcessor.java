@@ -58,6 +58,12 @@ import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
 import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+/**
+ * NameServer处理
+ * NameServer在启动时注册了一个请求处理器DefaultRequestProcessor，当收到其他服务发送的请求时，会进入到processRequest方法中，通过Switch CASE对请求类型判断
+ * ，进行不同的处理。
+ *
+ */
 public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
     private static InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
 
@@ -67,6 +73,14 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         this.namesrvController = namesrvController;
     }
 
+    /**
+     * 处理请求
+     *
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
@@ -79,6 +93,7 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         }
 
 
+        // 判断请求类型
         switch (request.getCode()) {
             case RequestCode.PUT_KV_CONFIG:
                 return this.putKVConfig(ctx, request);
@@ -89,12 +104,13 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
             case RequestCode.QUERY_DATA_VERSION:
                 // 向nameserver 发送心跳
                 return queryBrokerTopicConfig(ctx, request);
-            case RequestCode.REGISTER_BROKER:
+            case RequestCode.REGISTER_BROKER: // 如果是Broker注册请求
                 // 30S 注册一次
                 Version brokerVersion = MQVersion.value2Version(request.getVersion());
                 if (brokerVersion.ordinal() >= MQVersion.Version.V3_0_11.ordinal()) {
                     return this.registerBrokerWithFilterServer(ctx, request);
                 } else {
+                    // 处理Broker的注册请求
                     return this.registerBroker(ctx, request);
                 }
             case RequestCode.UNREGISTER_BROKER:
@@ -278,13 +294,29 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         return response;
     }
 
+    /**
+     * Broker注册请求处理
+     * 1. 对Broker请求注册的处理在registerBroker方法中：
+     *  1. 对请求数据进行CRC32校验，检查数据的合法性
+     *  2. 通过RouteInfoManager的registerBroker方法对Broker进行注册
+     *  3. 将注册结果设置到响应数据中，返回给Broker
+     *
+     *
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand registerBroker(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
+        // 创建响应命令对象
         final RemotingCommand response = RemotingCommand.createResponseCommand(RegisterBrokerResponseHeader.class);
         final RegisterBrokerResponseHeader responseHeader = (RegisterBrokerResponseHeader) response.readCustomHeader();
+        // 获取请求头
         final RegisterBrokerRequestHeader requestHeader =
             (RegisterBrokerRequestHeader) request.decodeCommandCustomHeader(RegisterBrokerRequestHeader.class);
 
+        // 进行crc32校验
         if (!checksum(ctx, request, requestHeader)) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
             response.setRemark("crc32 not match");
@@ -292,7 +324,9 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         }
 
         TopicConfigSerializeWrapper topicConfigWrapper;
+        // 如果请求体不为空
         if (request.getBody() != null) {
+            // 获取请求中的主题配置
             topicConfigWrapper = TopicConfigSerializeWrapper.decode(request.getBody(), TopicConfigSerializeWrapper.class);
         } else {
             topicConfigWrapper = new TopicConfigSerializeWrapper();
@@ -300,6 +334,7 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
             topicConfigWrapper.getDataVersion().setTimestamp(0);
         }
 
+        // 进行注册
         RegisterBrokerResult result = this.namesrvController.getRouteInfoManager().registerBroker(
             requestHeader.getClusterName(),
             requestHeader.getBrokerAddr(),
@@ -315,9 +350,11 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         responseHeader.setMasterAddr(result.getMasterAddr());
 
         byte[] jsonValue = this.namesrvController.getKvConfigManager().getKVListByNamespace(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG);
+        // 设置响应内容
         response.setBody(jsonValue);
         response.setCode(ResponseCode.SUCCESS);
         response.setRemark(null);
+        // 返回响应
         return response;
     }
 

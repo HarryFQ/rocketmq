@@ -110,6 +110,16 @@ public class BrokerOuterAPI {
         this.remotingClient.updateNameServerAddressList(lst);
     }
 
+    /**
+     * 发送注册请求
+     * 1. registerBrokerAll方法的处理逻辑如下：
+     *  1. 封装请求头，设置当前Broker的IP、Name等信息
+     *  2. 封装请求体，主要是设置主题配置信息和消息过滤服务器列表并对请求体的内容计算CRC32校验和，NameServer收到请求时会对数据进行校验
+     *  3. 遍历所有的NameServer服务列表，对每一个NameServer进行注册，为了提升效率注册任务是放在线程池中开启多线程执行的，所以使用了CountDownLatch，调用await方法等待所有的NameServer都注册完毕
+     *  4. 底层使用Netty进行网络通信，向NameServer发送注册请求，请求对应的类型为REGISTER_BROKER
+     *  5. 处理请求响应数据，将结果封装到RegisterBrokerResult中返回
+     *
+     */
     public List<RegisterBrokerResult> registerBrokerAll(
         final String clusterName,
         final String brokerAddr,
@@ -121,32 +131,42 @@ public class BrokerOuterAPI {
         final boolean oneway,
         final int timeoutMills,
         final boolean compressed) {
-        // 向nameserver 发送消息
+        // 向nameserver 发送消息     ，创建list，保存注册结果
         final List<RegisterBrokerResult> registerBrokerResultList = new CopyOnWriteArrayList<>();
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null && nameServerAddressList.size() > 0) {
 
+            // 封装请求头
             final RegisterBrokerRequestHeader requestHeader = new RegisterBrokerRequestHeader();
+            // 设置Broker地址
             requestHeader.setBrokerAddr(brokerAddr);
+            // 设置Broker Id
             requestHeader.setBrokerId(brokerId);
+            // 设置Broker Name
             requestHeader.setBrokerName(brokerName);
+            // 设置集群名称
             requestHeader.setClusterName(clusterName);
             requestHeader.setHaServerAddr(haServerAddr);
             requestHeader.setCompressed(compressed);
 
+            // 设置请求体
             RegisterBrokerBody requestBody = new RegisterBrokerBody();
+            // 设置主题配置
             requestBody.setTopicConfigSerializeWrapper(topicConfigWrapper);
+            // 设置消息过滤服务器列表
             requestBody.setFilterServerList(filterServerList);
             final byte[] body = requestBody.encode(compressed);
+            // 计算CRC32
             final int bodyCrc32 = UtilAll.crc32(body);
             requestHeader.setBodyCrc32(bodyCrc32);
             final CountDownLatch countDownLatch = new CountDownLatch(nameServerAddressList.size());
-            //TODo 遍历所有的nameserver 地址，分别给每一个nameserver 注册消息
+            //TODo 遍历所有的nameserver 地址，分别给每一个nameserver 注册消息 ， 遍历NameServer服务列表
             for (final String namesrvAddr : nameServerAddressList) {
                 brokerOuterExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
+                            // 进行注册，底层通过Netty进行网络通信
                             RegisterBrokerResult result = registerBroker(namesrvAddr,oneway, timeoutMills,requestHeader,body);
                             if (result != null) {
                                 registerBrokerResultList.add(result);
@@ -163,6 +183,7 @@ public class BrokerOuterAPI {
             }
 
             try {
+                // 等待所有的NameServer都注册完毕
                 countDownLatch.await(timeoutMills, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
             }
@@ -173,6 +194,7 @@ public class BrokerOuterAPI {
 
     /**
      * TODO 向nameserver 发起心跳请求
+     * 通过Netty发送注册请求
      * @param namesrvAddr
      * @param oneway
      * @param timeoutMills
@@ -194,7 +216,9 @@ public class BrokerOuterAPI {
         final byte[] body
     ) throws RemotingCommandException, MQBrokerException, RemotingConnectException, RemotingSendRequestException, RemotingTimeoutException,
         InterruptedException {
+        // 创建请求命令，这里发送的请求是REGISTER_BROKER类型
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.REGISTER_BROKER, requestHeader);
+        // 设置请求体
         request.setBody(body);
 
         if (oneway) {
@@ -206,13 +230,16 @@ public class BrokerOuterAPI {
             return null;
         }
 
+        // 发送请求
         RemotingCommand response = this.remotingClient.invokeSync(namesrvAddr, request, timeoutMills);
         assert response != null;
         switch (response.getCode()) {
             case ResponseCode.SUCCESS: {
+                // 获取注册结果
                 RegisterBrokerResponseHeader responseHeader =
                     (RegisterBrokerResponseHeader) response.decodeCommandCustomHeader(RegisterBrokerResponseHeader.class);
                 RegisterBrokerResult result = new RegisterBrokerResult();
+                // 设置Master Broker的地址
                 result.setMasterAddr(responseHeader.getMasterAddr());
                 result.setHaServerAddr(responseHeader.getHaServerAddr());
                 if (response.getBody() != null) {

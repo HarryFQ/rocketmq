@@ -107,6 +107,11 @@ import org.apache.rocketmq.store.dledger.DLedgerCommitLog;
 import org.apache.rocketmq.store.stats.BrokerStats;
 import org.apache.rocketmq.store.stats.BrokerStatsManager;
 
+/**
+ * 在Broker的启动函数中，添加了定时向NameServer进行注册的任务，在启动后延迟10秒向NameServer进行注册，之后定时发送心跳包，关于发送周期，首先从Broker配置的周期与60000毫秒中选出最小的那个值
+ * ，然后再与10000毫秒对比，选出最大的那个，所以最长10秒钟执行一次心跳发送：
+ *
+ */
 public class BrokerController {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final InternalLogger LOG_PROTECTION = InternalLoggerFactory.getLogger(LoggerName.PROTECTION_LOGGER_NAME);
@@ -930,6 +935,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    // 向NameServer注册
                     BrokerController.this.registerBrokerAll(true, false, brokerConfig.isForceRegister());
                 } catch (Throwable e) {
                     log.error("registerBrokerAll Exception", e);
@@ -967,6 +973,7 @@ public class BrokerController {
         doRegisterBrokerAll(true, false, topicConfigSerializeWrapper);
     }
     // 同步方法
+
     public synchronized void registerBrokerAll(final boolean checkOrderConfig, boolean oneway, boolean forceRegister) {
         TopicConfigSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildTopicConfigSerializeWrapper();
 
@@ -987,15 +994,22 @@ public class BrokerController {
             this.brokerConfig.getBrokerName(),
             this.brokerConfig.getBrokerId(),
             this.brokerConfig.getRegisterBrokerTimeoutMills())) {
-            // TODO
+            // TODO   调用doRegisterBrokerAll
             doRegisterBrokerAll(checkOrderConfig, oneway, topicConfigWrapper);
         }
     }
 
     // 进行注册
+
+    /**
+     * 注册Broker
+     * @param checkOrderConfig
+     * @param oneway
+     * @param topicConfigWrapper
+     */
     private void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
-        // 注册消息
+        // 调用BrokerOuterAPI的registerBrokerAll进行注册 创建list，保存注册结果
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),

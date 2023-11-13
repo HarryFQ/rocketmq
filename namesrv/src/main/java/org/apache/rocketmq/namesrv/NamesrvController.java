@@ -115,7 +115,9 @@ public class NamesrvController {
         // 注册线程池, 接受客服端，并进行处理
         // 注册处理器
         this.registerProcessor();
-        /** 定时任务： 每个10 扫描不是活跃的broker
+        /**
+         * 定时扫描下线的Broker
+         * 定时任务： 每个10s 扫描不是活跃的broker
          * 定时扫描这个map {@link RouteInfoManager#brokerLiveTable}
         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
@@ -123,6 +125,7 @@ public class NamesrvController {
             @Override
             public void run() {
                 // 心跳监测扫描处于不活跃状态的Broker
+                // NameServer在启动时注册了定时检查处于不活跃状态Broker的任务
                 NamesrvController.this.routeInfoManager.scanNotActiveBroker();
             }
         }, 5, 10, TimeUnit.SECONDS);
