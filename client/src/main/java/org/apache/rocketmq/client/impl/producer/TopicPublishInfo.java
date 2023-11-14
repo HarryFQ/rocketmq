@@ -26,8 +26,17 @@ import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 public class TopicPublishInfo {
     private boolean orderTopic = false;
     private boolean haveTopicRouterInfo = false;
+    /**
+     * 记录了主题名称、主题所属的Broker名称和队列ID
+     */
     private List<MessageQueue> messageQueueList = new ArrayList<MessageQueue>();
+    /**
+     * 计数器，选择消息队列的时候增1，以此达到轮询的目的
+     */
     private volatile ThreadLocalIndex sendWhichQueue = new ThreadLocalIndex();
+    /**
+     * 从NameServer查询到的主题对应的路由数据，包含了队列和Broker的相关数据（brokerData）
+     */
     private TopicRouteData topicRouteData;
 
     public boolean isOrderTopic() {

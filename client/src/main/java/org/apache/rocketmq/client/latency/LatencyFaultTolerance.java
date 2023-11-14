@@ -44,7 +44,6 @@ public interface LatencyFaultTolerance<T> {
      * 2. 调用sort方法对链表进行排序，默认是正序从小到大排序，FaultItem还实现Comparable就是为了在这里进行排序，值小的排在链表前面
      *
      * 3. 计算中间值half：
-     *
      *  3.1如果half值小于等于0，取链表中的第一个元素
      *  3.2如果half值大于0，从前half个元素中轮询选择元素
      *由FaultItem的compareTo方法可知，currentLatency和startTimestamp的值越小，整个FaultItem的值也就越小，正序排序时越靠前

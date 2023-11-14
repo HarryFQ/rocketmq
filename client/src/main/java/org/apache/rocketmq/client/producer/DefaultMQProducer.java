@@ -59,6 +59,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * Wrapping internal implementations for virtually all methods presented in this class.
+     *  默认消息生产者实现类
      */
     protected final transient DefaultMQProducerImpl defaultMQProducerImpl;
     private final InternalLogger log = ClientLogger.getLog();
@@ -308,7 +309,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      * <strong>Warn:</strong> this method has internal retry-mechanism, that is, internal implementation will retry
      * {@link #retryTimesWhenSendFailed} times before claiming failure. As a result, multiple messages may potentially
      * delivered to broker(s). It's up to the application developers to resolve potential duplication issue.
-     *这个方法有内部的重试机制，即内部实现在声明失败之前会重试{@link #retryTimesWhenSendFailed}次。
+     * 这个方法有内部的重试机制，即内部实现在声明失败之前会重试{@link #retryTimesWhenSendFailed}次。
      * 因此，可能会有多个消息传递给代理。这取决于应用程序开发人员解决潜在的重复问题。
      * @param msg Message to send.
      * @return {@link SendResult} instance to inform senders details of the deliverable, say Message ID of the message,
@@ -322,7 +323,9 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     public SendResult send(
         Message msg) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         Validators.checkMessage(msg, this);
+        // 设置主题
         msg.setTopic(withNamespace(msg.getTopic()));
+        // 发送消息
         return this.defaultMQProducerImpl.send(msg);
     }
 

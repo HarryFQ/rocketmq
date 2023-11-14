@@ -98,6 +98,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     private final InternalLogger log = ClientLogger.getLog();
     private final Random random = new Random();
     private final DefaultMQProducer defaultMQProducer;
+    /**
+     * 路由信息表，KEY为topic, value为对应的路由信息对象TopicPublishInfo
+     */
     private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable =
         new ConcurrentHashMap<String, TopicPublishInfo>();
     private final ArrayList<SendMessageHook> sendMessageHookList = new ArrayList<SendMessageHook>();
@@ -587,6 +590,16 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
     /**
      * 3. 生产者 发送消息实际发送接口
+     * 1. sendDefaultImpl方法中实现，处理逻辑如下：
+     *  1. 根据设置的主题查找对应的路由信息TopicPublishInfo
+     *  2. 获取失败重试次数，在消息发送失败时进行重试
+     *  3. 获取上一次选择的消息队列所在的Broker，如果上次选择的Broker为空则为NULL，然后调用selectOneMessageQueue方法选择一个消息队列，并记录本次选择的消息队列
+     *      ，在下一次重试发送消息时选择队列时使用
+     *  4. 计算选择消息队列的耗时，如果大于超时时间，终止本次发送
+     *  5. 调用sendKernelImpl方法进行消息发送
+     *  6. 调用updateFaultItem记录向Broker发送消息的耗时，在开启故障延迟处理机制时使用
+     *
+     *
      * @param msg
      * @param communicationMode sync:同步， async:异步
      * @param sendCallback 回调函数，异步使用，同步为null
@@ -618,7 +631,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             MessageQueue mq = null;
             Exception exception = null;
             SendResult sendResult = null;
-            // 获取失败重试次数
+            // 获取失败重试次数 默认3次
             int timesTotal = communicationMode == CommunicationMode.SYNC ? 1 + this.defaultMQProducer.getRetryTimesWhenSendFailed() : 1;
             int times = 0;
             String[] brokersSent = new String[timesTotal];
@@ -1513,7 +1526,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     /**
      * 2. 发送同步消息 带超时时间
      * @param msg
-     * @param timeout
+     * @param timeout 默认3秒
      * @return
      * @throws MQClientException
      * @throws RemotingException
