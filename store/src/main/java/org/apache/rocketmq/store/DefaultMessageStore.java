@@ -450,7 +450,7 @@ public class DefaultMessageStore implements MessageStore {
 
     @Override
     public CompletableFuture<PutMessageResult> asyncPutMessage(MessageExtBrokerInner msg) {
-        // 校验存储状态
+        // 校验存储状态：是否停止、是否是slave、是否可写入、系统的OS_PAGECACHE 是否繁忙
         PutMessageStatus checkStoreStatus = this.checkStoreStatus();
         if (checkStoreStatus != PutMessageStatus.PUT_OK) {
             return CompletableFuture.completedFuture(new PutMessageResult(checkStoreStatus, null));
@@ -513,7 +513,7 @@ public class DefaultMessageStore implements MessageStore {
 
     @Override
     public PutMessageResult putMessage(MessageExtBrokerInner msg) {
-        // 校验存储状态
+        // 校验存储状态：是否停止、是否是slave、是否可写入、系统的OS_PAGECACHE 是否繁忙
         PutMessageStatus checkStoreStatus = this.checkStoreStatus();
         if (checkStoreStatus != PutMessageStatus.PUT_OK) {
             return new PutMessageResult(checkStoreStatus, null);

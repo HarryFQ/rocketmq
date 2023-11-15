@@ -668,7 +668,7 @@ public class CommitLog {
             switch (result.getStatus()) {
                 case PUT_OK:
                     break;
-                case END_OF_FILE:
+                case END_OF_FILE: //整个消息数据大小大于日志文件剩余的空间大小
                     unlockMappedFile = mappedFile;
                     // Create a new file, re-write the message
                     mappedFile = this.mappedFileQueue.getLastMappedFile(0);
@@ -680,7 +680,7 @@ public class CommitLog {
                     }
                     result = mappedFile.appendMessage(msg, this.appendMessageCallback);
                     break;
-                case MESSAGE_SIZE_EXCEEDED:
+                case MESSAGE_SIZE_EXCEEDED:// 整个消息数据大小设置的单条消息大小
                 case PROPERTIES_SIZE_EXCEEDED:
                     beginTimeInLock = 0;
                     return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, result));
@@ -1075,7 +1075,7 @@ public class CommitLog {
     }
 
     /**
-     * Master节点中，当消息被写入到CommitLog以后，会调用 submitReplicaRequest 方法处主从同步，首先判断当前Broker的角色是否是SYNC_MASTER
+     * Master节点中，当消息被写入到CommitLog以后，会调用 submitReplicaRequest 方法处理主从同步，首先判断当前Broker的角色是否是SYNC_MASTER
      * ，如果是则会构建消息提交请求GroupCommitRequest，然后调用HAService的putRequest添加到请求集合中，并唤醒GroupTransferService中在等待的线程.
      *
      * @param result
@@ -1819,6 +1819,7 @@ public class CommitLog {
             ByteBuffer bornHostHolder = ByteBuffer.allocate(bornHostLength);
             ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);
 
+            // 重置缓冲区，将共享缓冲区切到头
             this.resetByteBuffer(storeHostHolder, storeHostLength);
             String msgId;
             if ((sysflag & MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {
