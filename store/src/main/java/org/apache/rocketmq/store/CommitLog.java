@@ -89,6 +89,7 @@ public class CommitLog {
             this.flushCommitLogService = new FlushRealTimeService();
         }
 
+        // 开启暂存池时使用
         this.commitLogService = new CommitRealTimeService();
         // 创建回调函数
         this.appendMessageCallback = new DefaultAppendMessageCallback(defaultMessageStore.getMessageStoreConfig().getMaxMessageSize());
@@ -1575,13 +1576,22 @@ public class CommitLog {
     }
 
     public static class GroupCommitRequest {
+        /**
+         * 写入位置偏移量+写入数据字节数，也就是本次刷盘成功后应该对应的flush偏移量
+         */
         private final long nextOffset;
-        // 刷盘状态
+
+        /**
+         * 刷盘结果 ，刷盘状态
+         */
         private CompletableFuture<PutMessageStatus> flushOKFuture = new CompletableFuture<>();
 
         private final long startTimestamp = System.currentTimeMillis();
 
-        // 刷盘的限定时间，超过限定时间还未刷盘完毕会被认为超时
+
+        /**
+         * 刷盘的限定时间，值为当前时间 + 传入的超时时间，超过限定时间还未刷盘完毕会被认为超时
+         */
         private long timeoutMillis = Long.MAX_VALUE;
 
         public GroupCommitRequest(long nextOffset, long timeoutMillis) {

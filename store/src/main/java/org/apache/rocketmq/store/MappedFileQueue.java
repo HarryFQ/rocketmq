@@ -467,9 +467,6 @@ public class MappedFileQueue {
      *      3. 判断本次提交的偏移量是否等于上一次的提交偏移量，如果等于表示本次未提交任何数据，返回结果置为true，否则表示提交了数据，等待刷盘，返回结果为false
      *      4. 更新上一次提交偏移量committedWhere的值为本次的提交偏移量的值
      *
-     *
-     *
-     *
      * @param commitLeastPages
      * @return
      */

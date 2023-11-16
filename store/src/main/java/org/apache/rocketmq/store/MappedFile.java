@@ -443,6 +443,7 @@ public class MappedFile extends ReferenceResource {
         // 写入位置偏移量
         int write = getReadPosition();
 
+        // 文件是否写满，文件大小是否与写入数据位置相等
         if (this.isFull()) {
             return true;
         }
