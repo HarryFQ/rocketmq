@@ -51,6 +51,7 @@ public class RebalancePushImpl extends RebalanceImpl {
     public void messageQueueChanged(String topic, Set<MessageQueue> mqAll, Set<MessageQueue> mqDivided) {
         /**
          * When rebalance result changed, should update subscription's version to notify broker.
+         * 当rebalance结果更改时，应更新订阅的版本以通知代理。
          * Fix: inconsistency subscription may lead to consumer miss messages.
          */
         SubscriptionData subscriptionData = this.subscriptionInner.get(topic);
@@ -65,6 +66,7 @@ public class RebalancePushImpl extends RebalanceImpl {
                 int newVal = Math.max(1, pullThresholdForTopic / currentQueueCount);
                 log.info("The pullThresholdForQueue is changed from {} to {}",
                     this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getPullThresholdForQueue(), newVal);
+                // 更新消费者缓存的条数
                 this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().setPullThresholdForQueue(newVal);
             }
 
@@ -73,6 +75,7 @@ public class RebalancePushImpl extends RebalanceImpl {
                 int newVal = Math.max(1, pullThresholdSizeForTopic / currentQueueCount);
                 log.info("The pullThresholdSizeForQueue is changed from {} to {}",
                     this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().getPullThresholdSizeForQueue(), newVal);
+                // 更新消费者缓存的消息大小
                 this.defaultMQPushConsumerImpl.getDefaultMQPushConsumer().setPullThresholdSizeForQueue(newVal);
             }
         }

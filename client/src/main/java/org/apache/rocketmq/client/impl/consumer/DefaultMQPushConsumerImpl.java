@@ -711,7 +711,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 // 检查配置
                 this.checkConfig();
 
-                // * 处理消息订阅
+                // * 处理消息订阅 主要是将 topic 包装成SubscriptionData对象，加进RebalanceImpl 内部集合中
                 this.copySubscription();
 
                 // 如果是集群模式
@@ -719,7 +719,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     this.defaultMQPushConsumer.changeInstanceNameToPID();
                 }
 
-                // 创建MQClientInstance 消费客户端实例，根据注册的消费之实际处理消息的类
+                // 创建客户端实例对象mQClientFactory，对应实现类为MQClientInstance，拉取服务线程、负载均衡线程都是通过MQClientInstance启动的
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQPushConsumer, this.rpcHook);
 
                 // 设置消费者组

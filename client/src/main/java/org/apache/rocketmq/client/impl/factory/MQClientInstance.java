@@ -669,7 +669,7 @@ public class MQClientInstance {
      * 1. 判断是否使用默认的主题路由信息，如果是则获取默认的路由信息
      * 2. 如果不使用默认的路由信息，则从NameServer根据Topic查询取路由信息;
      * 3. 获取到的主题路由信息被封装为TopicRouteData类型的对象返回
-     * 4. 从topicRouteTable主题路由表中根据主题获取旧的路由信息，与新的对比，判断信息是否发生了变化，如果发送了变化需要更新brokerAddrTable中记录的数据
+     * 4. 从topicRouteTable主题路由表中根据主题获取旧的路由信息，与新的对比，判断信息是否发生了变化，如果发生了变化需要更新brokerAddrTable中记录的数据
      * 5. 将新的路由信息对象加入到路由表topicRouteTable中，替换掉旧的信息
      */
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
