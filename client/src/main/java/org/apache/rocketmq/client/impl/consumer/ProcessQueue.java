@@ -48,6 +48,7 @@ public class ProcessQueue {
     /**
      * key: queueOffset
      * value: message
+     * 且有序，根据key 来排序
      */
     private final TreeMap<Long, MessageExt> msgTreeMap = new TreeMap<Long, MessageExt>();
     private final AtomicLong msgCount = new AtomicLong();

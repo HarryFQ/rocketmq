@@ -521,6 +521,7 @@ public class ConsumeMessageOrderlyService implements ConsumeMessageService {
                             ConsumeMessageOrderlyService.this.defaultMQPushConsumer.getConsumeMessageBatchMaxSize();
                         //获取消息内容， 连续同阻塞队列弹出消息并返回
                         List<MessageExt> msgs = this.processQueue.takeMessages(consumeBatchSize);
+                        // 设置重试主题名称
                         defaultMQPushConsumerImpl.resetRetryAndNamespace(msgs, defaultMQPushConsumer.getConsumerGroup());
                         if (!msgs.isEmpty()) {
                             final ConsumeOrderlyContext context = new ConsumeOrderlyContext(this.messageQueue);
