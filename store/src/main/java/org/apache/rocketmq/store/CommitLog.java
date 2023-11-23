@@ -1795,7 +1795,7 @@ public class CommitLog {
 
         /**
          * 方法的处理逻辑如下：
-         *  1. 计算文件要写入位置偏移量：文件起始位置偏移量 + 准备写入位置的偏移量
+         *  1. 计算文件要写入后的位置偏移量：文件起始位置偏移量 + 准备写入的偏移量
          *  2. 从消息写入上下文中获取主题所属队列的KEY，根据KEY从主题队列路由表中获取队列偏移量，如果获取为空，将偏移量初始化为0并加入到路由表中
          *  3. 从msgInner中获取之前已经写入到内存的消息数据preEncodeBuffer，并获取消息内容的长度
          *  4. 校验是否有足够的空间写入数据，如果消息长度 + END_FILE_MIN_BLANK_LENGTH（预留空间大小） 大于剩余空间，说明超出了限定的
@@ -1809,7 +1809,7 @@ public class CommitLog {
          * @param maxBlank
          * @param msgInner
          * @return PUT_OK：写入成功;
-         *          END_OF_FILE：超过文件大小;
+         *          END_OF_FILE：超过文件剩余大小;
          *          MESSAGE_SIZE_EXCEEDED：消息长度超过最大允许长度:
          *          PROPERTIES_SIZE_EXCEEDED：消息、属性超过最大允许长度;
          *          UNKNOWN_ERROR:未知异常;
