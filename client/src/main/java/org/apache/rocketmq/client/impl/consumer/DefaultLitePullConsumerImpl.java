@@ -283,7 +283,7 @@ public class DefaultLitePullConsumerImpl implements MQConsumerInner {
                 // 初始化负载均衡
                 initRebalanceImpl();
 
-                // 初始化消息拉取API对象
+                // 初始化消息拉取API对象,并设置消息的filter
                 initPullAPIWrapper();
 
                 // 初始化拉取偏移量

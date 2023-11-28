@@ -369,7 +369,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         // 从处理队列中移除消息
         long offset = consumeRequest.getProcessQueue().removeMessage(consumeRequest.getMsgs());
         if (offset >= 0 && !consumeRequest.getProcessQueue().isDropped()) {
-            // 更新拉取偏移量
+            // 更新拉取偏移量 offset 默认时已消费的+1，但如msgTreeMap 移除此次批量消费的还有不为空，则就是第一条的。
             this.defaultMQPushConsumerImpl.getOffsetStore().updateOffset(consumeRequest.getMessageQueue(), offset, true);
         }
     }

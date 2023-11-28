@@ -28,7 +28,7 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.common.message.MessageQueue;
 
 /**
- * Consistent Hashing queue algorithm（一直哈希分配）
+ * Consistent Hashing queue algorithm（一致哈希分配）
  */
 public class AllocateMessageQueueConsistentHash implements AllocateMessageQueueStrategy {
     private final InternalLogger log = ClientLogger.getLog();

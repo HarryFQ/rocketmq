@@ -145,6 +145,8 @@ public class PullAPIWrapper {
      *总结
      * 1. 消费者在启动后需要向Broker发送拉取消息的请求，Broker收到请求后会根据消息的拉取进度，返回一个建议的BrokerID，并设置到响应中返回
      *  ，消费者处理响应时将建议的BrokerID放入pullFromWhichNodeTable，下次拉去消息的时候从pullFromWhichNodeTable中取出，并向其发送请求拉取消息.
+     *  2. 是否从从节点读取数据判断条件：
+     *      1. diff(为拉取的消息)>memory(MQ缓存在系统PageCache中的消息): 就从从节点拉取消息
      * @param mq
      * @param brokerId
      */

@@ -739,7 +739,7 @@ public class MQClientInstance {
 
                             // Update sub info
                             {
-                                // 遍历更新每个消费者的每个topic的订阅的 messageQueue，主要是rebalance
+                                // 遍历更新每个消费者的每个topic的订阅的 messageQueue，主要是rebalance用
                                 Set<MessageQueue> subscribeInfo = topicRouteData2TopicSubscribeInfo(topic, topicRouteData);
                                 Iterator<Entry<String, MQConsumerInner>> it = this.consumerTable.entrySet().iterator();
                                 while (it.hasNext()) {
